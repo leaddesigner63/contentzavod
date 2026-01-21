@@ -1,7 +1,12 @@
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, EmailStr
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
 
 
 class ProjectCreate(BaseModel):
@@ -199,3 +204,51 @@ class BudgetUsage(BudgetUsageCreate):
     id: int
     project_id: int
     created_at: datetime
+
+
+class Role(BaseModel):
+    id: int
+    name: str
+    created_at: datetime
+
+
+class RoleCreate(BaseModel):
+    name: str
+
+
+class UserCreate(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=8)
+    roles: List[str] = Field(default_factory=lambda: ["Viewer"])
+    is_active: bool = True
+
+
+class User(BaseModel):
+    id: int
+    email: EmailStr
+    roles: List[str]
+    is_active: bool
+    created_at: datetime
+
+
+class BootstrapUserCreate(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=8)
+
+
+class IntegrationTokenCreate(BaseModel):
+    provider: str
+    token: str
+
+
+class IntegrationTokenUpdate(BaseModel):
+    token: str
+
+
+class IntegrationToken(BaseModel):
+    id: int
+    project_id: int
+    provider: str
+    token: str
+    created_at: datetime
+    updated_at: datetime

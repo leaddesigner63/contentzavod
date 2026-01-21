@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from typing import List, Optional
 
@@ -7,11 +8,51 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import models, schemas
+from .security import decrypt_secret, encrypt_secret
 
 
 class DatabaseStore:
     def __init__(self, session: Session) -> None:
         self.session = session
+        self.jwt_secret_key = os.getenv("JWT_SECRET_KEY", "change_me")
+        self.jwt_algorithm = os.getenv("JWT_ALGORITHM", "HS256")
+        self.jwt_expire_minutes = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
+
+    def has_users(self) -> bool:
+        return bool(self.session.scalar(select(models.User.id)))
+
+    def get_user_by_email(self, email: str) -> Optional[models.User]:
+        return self.session.scalar(select(models.User).where(models.User.email == email))
+
+    def list_users(self) -> List[schemas.User]:
+        users = self.session.scalars(select(models.User)).all()
+        return [self.to_user_schema(user) for user in users]
+
+    def create_role(self, name: str) -> models.Role:
+        role = self.session.scalar(select(models.Role).where(models.Role.name == name))
+        if role:
+            return role
+        role = models.Role(name=name)
+        self.session.add(role)
+        self.session.flush()
+        return role
+
+    def list_roles(self) -> List[schemas.Role]:
+        roles = self.session.scalars(select(models.Role)).all()
+        return [self._to_role(role) for role in roles]
+
+    def create_user(self, payload: schemas.UserCreate, password_hash: str) -> schemas.User:
+        user = models.User(
+            email=payload.email,
+            hashed_password=password_hash,
+            is_active=payload.is_active,
+        )
+        self.session.add(user)
+        for role_name in sorted(set(payload.roles)):
+            role = self.create_role(role_name)
+            self.session.add(models.UserRole(user=user, role=role))
+        self.session.flush()
+        return self.to_user_schema(user)
 
     def list_projects(self) -> List[schemas.Project]:
         projects = self.session.scalars(select(models.Project)).all()
@@ -374,6 +415,53 @@ class DatabaseStore:
         ).all()
         return [self._to_prompt_version(prompt) for prompt in prompts]
 
+    def create_integration_token(
+        self, project_id: int, payload: schemas.IntegrationTokenCreate
+    ) -> schemas.IntegrationToken:
+        project = self._require_project(project_id)
+        token = models.IntegrationToken(
+            project=project,
+            provider=payload.provider,
+            token_encrypted=encrypt_secret(payload.token),
+        )
+        self.session.add(token)
+        self.session.flush()
+        return self._to_integration_token(token)
+
+    def list_integration_tokens(self, project_id: int) -> List[schemas.IntegrationToken]:
+        self._require_project(project_id)
+        tokens = self.session.scalars(
+            select(models.IntegrationToken).where(
+                models.IntegrationToken.project_id == project_id
+            )
+        ).all()
+        return [self._to_integration_token(token) for token in tokens]
+
+    def get_integration_token(
+        self, project_id: int, token_id: int
+    ) -> schemas.IntegrationToken:
+        token = self.session.get(models.IntegrationToken, token_id)
+        if not token or token.project_id != project_id:
+            raise KeyError("integration_token_not_found")
+        return self._to_integration_token(token)
+
+    def update_integration_token(
+        self, project_id: int, token_id: int, payload: schemas.IntegrationTokenUpdate
+    ) -> schemas.IntegrationToken:
+        token = self.session.get(models.IntegrationToken, token_id)
+        if not token or token.project_id != project_id:
+            raise KeyError("integration_token_not_found")
+        token.token_encrypted = encrypt_secret(payload.token)
+        self.session.add(token)
+        self.session.flush()
+        return self._to_integration_token(token)
+
+    def delete_integration_token(self, project_id: int, token_id: int) -> None:
+        token = self.session.get(models.IntegrationToken, token_id)
+        if not token or token.project_id != project_id:
+            raise KeyError("integration_token_not_found")
+        self.session.delete(token)
+
     def _require_project(self, project_id: int) -> models.Project:
         project = self.session.get(models.Project, project_id)
         if not project:
@@ -556,4 +644,34 @@ class DatabaseStore:
             version=prompt.version,
             is_active=prompt.is_active,
             created_at=prompt.created_at,
+        )
+
+    @staticmethod
+    def _to_role(role: models.Role) -> schemas.Role:
+        return schemas.Role(
+            id=role.id,
+            name=role.name,
+            created_at=role.created_at,
+        )
+
+    @staticmethod
+    def to_user_schema(user: models.User) -> schemas.User:
+        roles = sorted({user_role.role.name for user_role in user.user_roles})
+        return schemas.User(
+            id=user.id,
+            email=user.email,
+            roles=roles,
+            is_active=user.is_active,
+            created_at=user.created_at,
+        )
+
+    @staticmethod
+    def _to_integration_token(token: models.IntegrationToken) -> schemas.IntegrationToken:
+        return schemas.IntegrationToken(
+            id=token.id,
+            project_id=token.project_id,
+            provider=token.provider,
+            token=decrypt_secret(token.token_encrypted),
+            created_at=token.created_at,
+            updated_at=token.updated_at,
         )

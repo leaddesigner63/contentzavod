@@ -13,6 +13,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -72,6 +73,45 @@ class Project(Base, TimestampMixin):
     budget_usages: Mapped[list[BudgetUsage]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
+    integration_tokens: Mapped[list[IntegrationToken]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+
+
+class Role(Base, TimestampMixin):
+    __tablename__ = "roles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+
+    user_roles: Mapped[list[UserRole]] = relationship(
+        back_populates="role", cascade="all, delete-orphan"
+    )
+
+
+class User(Base, TimestampMixin):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    user_roles: Mapped[list[UserRole]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class UserRole(Base):
+    __tablename__ = "user_roles"
+    __table_args__ = (UniqueConstraint("user_id", "role_id", name="uniq_user_role"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    role_id: Mapped[int] = mapped_column(ForeignKey("roles.id"))
+
+    user: Mapped[User] = relationship(back_populates="user_roles")
+    role: Mapped[Role] = relationship(back_populates="user_roles")
 
 
 class BrandConfig(Base, TimestampMixin):
@@ -285,3 +325,20 @@ class PromptVersion(Base, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     project: Mapped[Project] = relationship(back_populates="prompt_versions")
+
+
+class IntegrationToken(Base):
+    __tablename__ = "integration_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
+    provider: Mapped[str] = mapped_column(String(32))
+    token_encrypted: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    project: Mapped[Project] = relationship(back_populates="integration_tokens")

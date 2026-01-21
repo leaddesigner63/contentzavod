@@ -1,0 +1,165 @@
+from datetime import datetime
+from typing import List, Optional
+
+from pydantic import BaseModel, Field
+
+
+class ProjectCreate(BaseModel):
+    name: str = Field(..., min_length=2)
+    description: Optional[str] = None
+
+
+class Project(ProjectCreate):
+    id: int
+    status: str = "active"
+    created_at: datetime
+
+
+class BrandConfigCreate(BaseModel):
+    tone: str
+    audience: str
+    offers: List[str] = []
+    rubrics: List[str] = []
+    forbidden: List[str] = []
+    cta_policy: str
+
+
+class BrandConfig(BrandConfigCreate):
+    id: int
+    project_id: int
+    version: int
+    created_at: datetime
+
+
+class BudgetCreate(BaseModel):
+    daily: float
+    weekly: float
+    monthly: float
+    token_limit: int
+    video_seconds_limit: int
+    publication_limit: int
+
+
+class Budget(BudgetCreate):
+    id: int
+    project_id: int
+    created_at: datetime
+
+
+class SourceCreate(BaseModel):
+    title: str
+    source_type: str
+    uri: Optional[str] = None
+    content: Optional[str] = None
+
+
+class Source(SourceCreate):
+    id: int
+    project_id: int
+    created_at: datetime
+
+
+class Atom(BaseModel):
+    id: int
+    project_id: int
+    source_id: int
+    kind: str
+    text: str
+    source_backed: bool
+    created_at: datetime
+
+
+class TopicCreate(BaseModel):
+    title: str
+    angle: str
+    rubric: Optional[str] = None
+    planned_for: Optional[datetime] = None
+
+
+class Topic(TopicCreate):
+    id: int
+    project_id: int
+    status: str = "planned"
+    created_at: datetime
+
+
+class ContentPackCreate(BaseModel):
+    topic_id: int
+    description: Optional[str] = None
+
+
+class ContentPack(ContentPackCreate):
+    id: int
+    project_id: int
+    status: str = "queued"
+    created_at: datetime
+
+
+class ContentItemCreate(BaseModel):
+    pack_id: int
+    channel: str
+    format: str
+    body: str
+    metadata: dict = Field(default_factory=dict)
+
+
+class ContentItem(ContentItemCreate):
+    id: int
+    project_id: int
+    status: str = "draft"
+    created_at: datetime
+
+
+class QcReportCreate(BaseModel):
+    content_item_id: int
+    score: float
+    passed: bool
+    reasons: List[str] = []
+
+
+class QcReport(QcReportCreate):
+    id: int
+    project_id: int
+    created_at: datetime
+
+
+class PublicationCreate(BaseModel):
+    content_item_id: int
+    platform: str
+    scheduled_at: datetime
+    status: str = "scheduled"
+
+
+class Publication(PublicationCreate):
+    id: int
+    project_id: int
+    platform_post_id: Optional[str] = None
+    published_at: Optional[datetime] = None
+
+
+class MetricSnapshotCreate(BaseModel):
+    content_item_id: int
+    impressions: int = 0
+    clicks: int = 0
+    likes: int = 0
+    comments: int = 0
+    shares: int = 0
+
+
+class MetricSnapshot(MetricSnapshotCreate):
+    id: int
+    project_id: int
+    collected_at: datetime
+
+
+class LearningEventCreate(BaseModel):
+    parameter: str
+    previous_value: str
+    new_value: str
+    reason: str
+
+
+class LearningEvent(LearningEventCreate):
+    id: int
+    project_id: int
+    created_at: datetime

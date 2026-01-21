@@ -13,6 +13,7 @@ class PipelineService:
 
     def run(self, project_id: int, topic_id: int) -> dict:
         """Запускает упрощённый пайплайн и возвращает созданные сущности."""
+        self.store.get_topic(project_id, topic_id)
         pack = self.store.create_content_pack(
             project_id,
             schemas.ContentPackCreate(topic_id=topic_id, description="auto"),

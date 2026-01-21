@@ -36,6 +36,9 @@ class InMemoryStore:
     def list_projects(self) -> List[schemas.Project]:
         return [store.project for store in self._projects.values()]
 
+    def get_project(self, project_id: int) -> schemas.Project:
+        return self.get_project_store(project_id).project
+
     def create_project(self, payload: schemas.ProjectCreate) -> schemas.Project:
         project_id = self._next_id("project")
         project = schemas.Project(
@@ -67,6 +70,9 @@ class InMemoryStore:
         store.brand_configs.append(config)
         return config
 
+    def list_brand_configs(self, project_id: int) -> List[schemas.BrandConfig]:
+        return self.get_project_store(project_id).brand_configs
+
     def create_budget(self, project_id: int, payload: schemas.BudgetCreate) -> schemas.Budget:
         store = self.get_project_store(project_id)
         budget = schemas.Budget(
@@ -77,6 +83,9 @@ class InMemoryStore:
         )
         store.budgets.append(budget)
         return budget
+
+    def list_budgets(self, project_id: int) -> List[schemas.Budget]:
+        return self.get_project_store(project_id).budgets
 
     def create_source(self, project_id: int, payload: schemas.SourceCreate) -> schemas.Source:
         store = self.get_project_store(project_id)
@@ -89,26 +98,29 @@ class InMemoryStore:
         store.sources.append(source)
         return source
 
-    def create_atom(
-        self,
-        project_id: int,
-        source_id: int,
-        kind: str,
-        text: str,
-        source_backed: bool,
-    ) -> schemas.Atom:
+    def list_sources(self, project_id: int) -> List[schemas.Source]:
+        return self.get_project_store(project_id).sources
+
+    def create_atom(self, project_id: int, payload: schemas.AtomCreate) -> schemas.Atom:
         store = self.get_project_store(project_id)
         atom = schemas.Atom(
             id=self._next_id("atom"),
             project_id=project_id,
-            source_id=source_id,
-            kind=kind,
-            text=text,
-            source_backed=source_backed,
             created_at=datetime.utcnow(),
+            **payload.model_dump(),
         )
         store.atoms.append(atom)
         return atom
+
+    def list_atoms(self, project_id: int) -> List[schemas.Atom]:
+        return self.get_project_store(project_id).atoms
+
+    def get_topic(self, project_id: int, topic_id: int) -> schemas.Topic:
+        store = self.get_project_store(project_id)
+        for topic in store.topics:
+            if topic.id == topic_id:
+                return topic
+        raise KeyError("topic_not_found")
 
     def create_topic(self, project_id: int, payload: schemas.TopicCreate) -> schemas.Topic:
         store = self.get_project_store(project_id)
@@ -120,6 +132,9 @@ class InMemoryStore:
         )
         store.topics.append(topic)
         return topic
+
+    def list_topics(self, project_id: int) -> List[schemas.Topic]:
+        return self.get_project_store(project_id).topics
 
     def create_content_pack(
         self, project_id: int, payload: schemas.ContentPackCreate
@@ -134,6 +149,9 @@ class InMemoryStore:
         store.content_packs.append(pack)
         return pack
 
+    def list_content_packs(self, project_id: int) -> List[schemas.ContentPack]:
+        return self.get_project_store(project_id).content_packs
+
     def create_content_item(
         self, project_id: int, payload: schemas.ContentItemCreate
     ) -> schemas.ContentItem:
@@ -146,6 +164,9 @@ class InMemoryStore:
         )
         store.content_items.append(item)
         return item
+
+    def list_content_items(self, project_id: int) -> List[schemas.ContentItem]:
+        return self.get_project_store(project_id).content_items
 
     def create_qc_report(
         self, project_id: int, payload: schemas.QcReportCreate
@@ -160,6 +181,9 @@ class InMemoryStore:
         store.qc_reports.append(report)
         return report
 
+    def list_qc_reports(self, project_id: int) -> List[schemas.QcReport]:
+        return self.get_project_store(project_id).qc_reports
+
     def create_publication(
         self, project_id: int, payload: schemas.PublicationCreate
     ) -> schemas.Publication:
@@ -171,6 +195,9 @@ class InMemoryStore:
         )
         store.publications.append(publication)
         return publication
+
+    def list_publications(self, project_id: int) -> List[schemas.Publication]:
+        return self.get_project_store(project_id).publications
 
     def create_metric_snapshot(
         self, project_id: int, payload: schemas.MetricSnapshotCreate
@@ -185,6 +212,9 @@ class InMemoryStore:
         store.metrics.append(snapshot)
         return snapshot
 
+    def list_metric_snapshots(self, project_id: int) -> List[schemas.MetricSnapshot]:
+        return self.get_project_store(project_id).metrics
+
     def create_learning_event(
         self, project_id: int, payload: schemas.LearningEventCreate
     ) -> schemas.LearningEvent:
@@ -197,3 +227,6 @@ class InMemoryStore:
         )
         store.learning_events.append(event)
         return event
+
+    def list_learning_events(self, project_id: int) -> List[schemas.LearningEvent]:
+        return self.get_project_store(project_id).learning_events

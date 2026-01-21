@@ -59,6 +59,13 @@ class Source(SourceCreate):
     created_at: datetime
 
 
+class AtomCreate(BaseModel):
+    source_id: int
+    kind: str
+    text: str
+    source_backed: bool
+
+
 class Atom(BaseModel):
     id: int
     project_id: int

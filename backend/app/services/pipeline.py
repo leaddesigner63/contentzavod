@@ -4,11 +4,11 @@ from datetime import datetime
 from typing import List
 
 from .. import schemas
-from ..storage import InMemoryStore
+from ..storage_db import DatabaseStore
 
 
 class PipelineService:
-    def __init__(self, store: InMemoryStore) -> None:
+    def __init__(self, store: DatabaseStore) -> None:
         self.store = store
 
     def run(self, project_id: int, topic_id: int) -> dict:

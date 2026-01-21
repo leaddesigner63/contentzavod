@@ -64,6 +64,7 @@ class AtomCreate(BaseModel):
     kind: str
     text: str
     source_backed: bool
+    embedding: Optional[List[float]] = None
 
 
 class Atom(BaseModel):
@@ -73,6 +74,7 @@ class Atom(BaseModel):
     kind: str
     text: str
     source_backed: bool
+    embedding: Optional[List[float]] = None
     created_at: datetime
 
 
@@ -167,6 +169,33 @@ class LearningEventCreate(BaseModel):
 
 
 class LearningEvent(LearningEventCreate):
+    id: int
+    project_id: int
+    created_at: datetime
+
+
+class PromptVersionCreate(BaseModel):
+    prompt_key: str
+    content: str
+    is_active: bool = True
+
+
+class PromptVersion(PromptVersionCreate):
+    id: int
+    project_id: int
+    version: int
+    created_at: datetime
+
+
+class BudgetUsageCreate(BaseModel):
+    budget_id: int
+    usage_date: datetime
+    token_used: int = 0
+    video_seconds_used: int = 0
+    publications_used: int = 0
+
+
+class BudgetUsage(BudgetUsageCreate):
     id: int
     project_id: int
     created_at: datetime

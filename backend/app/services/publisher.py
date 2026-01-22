@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Optional, Protocol
 from urllib import parse, request
 
+from sqlalchemy import select
+
 from .. import models, schemas
 from ..observability import get_logger
 from ..storage_db import DatabaseStore
@@ -219,6 +221,12 @@ class PublisherService:
         publication = self.store.session.get(models.Publication, publication_id)
         if not publication or publication.project_id != project_id:
             raise KeyError("publication_not_found")
+        if not self._qc_passed(project_id, publication.content_item_id):
+            publication.status = "failed"
+            publication.last_error = "qc_failed"
+            self.store.session.add(publication)
+            self.store.session.flush()
+            return self.store._to_publication(publication)
         if publication.status == "published" and publication.platform_post_id:
             return self.store._to_publication(publication)
         if publication.status == "publishing":
@@ -371,6 +379,17 @@ class PublisherService:
         project_id: int, content_item_id: int, platform: str, scheduled_at: datetime
     ) -> str:
         return f"{project_id}:{content_item_id}:{platform}:{scheduled_at.isoformat()}"
+
+    def _qc_passed(self, project_id: int, content_item_id: int) -> bool:
+        report = self.store.session.scalar(
+            select(models.QcReport)
+            .where(
+                models.QcReport.project_id == project_id,
+                models.QcReport.content_item_id == content_item_id,
+            )
+            .order_by(models.QcReport.created_at.desc())
+        )
+        return bool(report and report.passed)
 
 
 def json_loads(content: str) -> dict:

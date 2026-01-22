@@ -37,6 +37,15 @@ class Project(Base, TimestampMixin):
     brand_configs: Mapped[list[BrandConfig]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
+    brand_config_history: Mapped[list[BrandConfigHistory]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    datasets: Mapped[list[ProjectDataset]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    vector_indexes: Mapped[list[ProjectVectorIndex]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
     budgets: Mapped[list[Budget]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
@@ -80,6 +89,9 @@ class Project(Base, TimestampMixin):
         back_populates="project", cascade="all, delete-orphan", uselist=False
     )
     prompt_versions: Mapped[list[PromptVersion]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    prompt_version_history: Mapped[list[PromptVersionHistory]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
     budget_usages: Mapped[list[BudgetUsage]] = relationship(
@@ -135,6 +147,8 @@ class BrandConfig(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
     version: Mapped[int] = mapped_column(Integer)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_stable: Mapped[bool] = mapped_column(Boolean, default=False)
     tone: Mapped[str] = mapped_column(String(255))
     audience: Mapped[str] = mapped_column(String(255))
     offers: Mapped[list] = mapped_column(JSON, default=list)
@@ -143,6 +157,52 @@ class BrandConfig(Base, TimestampMixin):
     cta_policy: Mapped[str] = mapped_column(Text)
 
     project: Mapped[Project] = relationship(back_populates="brand_configs")
+
+
+class BrandConfigHistory(Base, TimestampMixin):
+    __tablename__ = "brand_config_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
+    brand_config_id: Mapped[int] = mapped_column(ForeignKey("brand_configs.id"))
+    version: Mapped[int] = mapped_column(Integer)
+    change_summary: Mapped[Optional[str]] = mapped_column(Text)
+    change_payload: Mapped[dict] = mapped_column(JSON, default=dict)
+
+    project: Mapped[Project] = relationship(back_populates="brand_config_history")
+    brand_config: Mapped[BrandConfig] = relationship()
+
+
+class ProjectDataset(Base, TimestampMixin):
+    __tablename__ = "project_datasets"
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", name="uniq_project_dataset"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
+    name: Mapped[str] = mapped_column(String(128))
+    kind: Mapped[str] = mapped_column(String(64), default="atoms")
+    storage_uri: Mapped[Optional[str]] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    project: Mapped[Project] = relationship(back_populates="datasets")
+
+
+class ProjectVectorIndex(Base, TimestampMixin):
+    __tablename__ = "project_vector_indexes"
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", name="uniq_project_vector_index"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
+    name: Mapped[str] = mapped_column(String(128))
+    provider: Mapped[str] = mapped_column(String(64), default="pgvector")
+    embedding_dimension: Mapped[int] = mapped_column(Integer, default=1536)
+    metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+
+    project: Mapped[Project] = relationship(back_populates="vector_indexes")
 
 
 class Budget(Base, TimestampMixin):
@@ -425,8 +485,24 @@ class PromptVersion(Base, TimestampMixin):
     content: Mapped[str] = mapped_column(Text)
     version: Mapped[int] = mapped_column(Integer)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_stable: Mapped[bool] = mapped_column(Boolean, default=False)
 
     project: Mapped[Project] = relationship(back_populates="prompt_versions")
+
+
+class PromptVersionHistory(Base, TimestampMixin):
+    __tablename__ = "prompt_version_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
+    prompt_version_id: Mapped[int] = mapped_column(ForeignKey("prompt_versions.id"))
+    prompt_key: Mapped[str] = mapped_column(String(255))
+    version: Mapped[int] = mapped_column(Integer)
+    change_summary: Mapped[Optional[str]] = mapped_column(Text)
+    change_payload: Mapped[dict] = mapped_column(JSON, default=dict)
+
+    project: Mapped[Project] = relationship(back_populates="prompt_version_history")
+    prompt_version: Mapped[PromptVersion] = relationship()
 
 
 class IntegrationToken(Base):

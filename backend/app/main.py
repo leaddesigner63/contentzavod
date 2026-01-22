@@ -219,6 +219,56 @@ def create_brand_config(
 
 
 @app.get(
+    "/projects/{project_id}/brand-configs/history",
+    response_model=list[schemas.BrandConfigHistory],
+)
+def list_brand_config_history(
+    project_id: int,
+    store: DatabaseStore = Depends(get_store),
+    _: schemas.User = Depends(auth.require_roles("Admin", "Editor", "Viewer")),
+) -> list[schemas.BrandConfigHistory]:
+    try:
+        return store.list_brand_config_history(project_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.put(
+    "/projects/{project_id}/brand-configs/{config_id}/stable",
+    response_model=schemas.BrandConfig,
+)
+def set_brand_config_stable(
+    project_id: int,
+    config_id: int,
+    payload: schemas.StableVersionUpdate,
+    store: DatabaseStore = Depends(get_store),
+    _: schemas.User = Depends(auth.require_roles("Admin", "Editor")),
+) -> schemas.BrandConfig:
+    try:
+        return store.set_brand_config_stable(project_id, config_id, payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post(
+    "/projects/{project_id}/brand-configs/rollback",
+    response_model=schemas.BrandConfig,
+)
+def rollback_brand_config(
+    project_id: int,
+    payload: schemas.BrandConfigRollback,
+    store: DatabaseStore = Depends(get_store),
+    _: schemas.User = Depends(auth.require_roles("Admin", "Editor")),
+) -> schemas.BrandConfig:
+    try:
+        return store.rollback_brand_config(project_id, payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get(
     "/projects/{project_id}/brand-configs", response_model=list[schemas.BrandConfig]
 )
 def list_brand_configs(
@@ -228,6 +278,35 @@ def list_brand_configs(
 ) -> list[schemas.BrandConfig]:
     try:
         return store.list_brand_configs(project_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get(
+    "/projects/{project_id}/datasets", response_model=list[schemas.ProjectDataset]
+)
+def list_project_datasets(
+    project_id: int,
+    store: DatabaseStore = Depends(get_store),
+    _: schemas.User = Depends(auth.require_roles("Admin", "Editor", "Viewer")),
+) -> list[schemas.ProjectDataset]:
+    try:
+        return store.list_project_datasets(project_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get(
+    "/projects/{project_id}/vector-indexes",
+    response_model=list[schemas.ProjectVectorIndex],
+)
+def list_project_vector_indexes(
+    project_id: int,
+    store: DatabaseStore = Depends(get_store),
+    _: schemas.User = Depends(auth.require_roles("Admin", "Editor", "Viewer")),
+) -> list[schemas.ProjectVectorIndex]:
+    try:
+        return store.list_project_vector_indexes(project_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -685,6 +764,56 @@ def create_prompt_version(
         return store.create_prompt_version(project_id, payload)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get(
+    "/projects/{project_id}/prompt-versions/history",
+    response_model=list[schemas.PromptVersionHistory],
+)
+def list_prompt_version_history(
+    project_id: int,
+    store: DatabaseStore = Depends(get_store),
+    _: schemas.User = Depends(auth.require_roles("Admin", "Editor", "Viewer")),
+) -> list[schemas.PromptVersionHistory]:
+    try:
+        return store.list_prompt_version_history(project_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.put(
+    "/projects/{project_id}/prompt-versions/{prompt_id}/stable",
+    response_model=schemas.PromptVersion,
+)
+def set_prompt_version_stable(
+    project_id: int,
+    prompt_id: int,
+    payload: schemas.StableVersionUpdate,
+    store: DatabaseStore = Depends(get_store),
+    _: schemas.User = Depends(auth.require_roles("Admin", "Editor")),
+) -> schemas.PromptVersion:
+    try:
+        return store.set_prompt_version_stable(project_id, prompt_id, payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post(
+    "/projects/{project_id}/prompt-versions/rollback",
+    response_model=schemas.PromptVersion,
+)
+def rollback_prompt_version(
+    project_id: int,
+    payload: schemas.PromptVersionRollback,
+    store: DatabaseStore = Depends(get_store),
+    _: schemas.User = Depends(auth.require_roles("Admin", "Editor")),
+) -> schemas.PromptVersion:
+    try:
+        return store.rollback_prompt_version(project_id, payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get(

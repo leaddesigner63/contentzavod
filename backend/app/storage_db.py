@@ -80,13 +80,28 @@ class DatabaseStore:
         )
         self.session.add(project)
         self.session.flush()
+        dataset = models.ProjectDataset(
+            project=project,
+            name=f"project_{project.id}_dataset",
+            kind="atoms",
+            storage_uri=f"s3://datasets/project_{project.id}",
+            is_active=True,
+        )
+        vector_index = models.ProjectVectorIndex(
+            project=project,
+            name=f"project_{project.id}_atoms",
+            provider="pgvector",
+            embedding_dimension=1536,
+            metadata={"table": "atoms"},
+        )
+        self.session.add_all([dataset, vector_index])
         return self._to_project(project)
 
     def create_brand_config(
         self, project_id: int, payload: schemas.BrandConfigCreate
     ) -> schemas.BrandConfig:
         project = self._require_project(project_id)
-        version = (
+        latest = (
             self.session.scalar(
                 select(models.BrandConfig)
                 .where(models.BrandConfig.project_id == project_id)
@@ -94,10 +109,19 @@ class DatabaseStore:
             )
             or None
         )
-        next_version = version.version + 1 if version else 1
+        next_version = latest.version + 1 if latest else 1
+        for active_config in self.session.scalars(
+            select(models.BrandConfig).where(
+                models.BrandConfig.project_id == project_id,
+                models.BrandConfig.is_active.is_(True),
+            )
+        ):
+            active_config.is_active = False
         config = models.BrandConfig(
             project=project,
             version=next_version,
+            is_active=True,
+            is_stable=payload.is_stable,
             tone=payload.tone,
             audience=payload.audience,
             offers=payload.offers,
@@ -107,6 +131,12 @@ class DatabaseStore:
         )
         self.session.add(config)
         self.session.flush()
+        self._record_brand_config_history(
+            project_id=project_id,
+            config=config,
+            previous=latest,
+            change_summary=payload.change_summary,
+        )
         return self._to_brand_config(config)
 
     def list_brand_configs(self, project_id: int) -> List[schemas.BrandConfig]:
@@ -115,6 +145,89 @@ class DatabaseStore:
             select(models.BrandConfig).where(models.BrandConfig.project_id == project_id)
         ).all()
         return [self._to_brand_config(config) for config in configs]
+
+    def list_brand_config_history(self, project_id: int) -> List[schemas.BrandConfigHistory]:
+        self._require_project(project_id)
+        history = self.session.scalars(
+            select(models.BrandConfigHistory)
+            .where(models.BrandConfigHistory.project_id == project_id)
+            .order_by(models.BrandConfigHistory.created_at.desc())
+        ).all()
+        return [self._to_brand_config_history(entry) for entry in history]
+
+    def set_brand_config_stable(
+        self, project_id: int, config_id: int, payload: schemas.StableVersionUpdate
+    ) -> schemas.BrandConfig:
+        config = self.session.get(models.BrandConfig, config_id)
+        if not config or config.project_id != project_id:
+            raise KeyError("brand_config_not_found")
+        previous = self._brand_config_snapshot(config)
+        config.is_stable = payload.is_stable
+        self.session.add(config)
+        self.session.flush()
+        self.session.add(
+            models.BrandConfigHistory(
+                project_id=project_id,
+                brand_config_id=config.id,
+                version=config.version,
+                change_summary="stable_status_changed",
+                change_payload={
+                    "previous": previous,
+                    "current": self._brand_config_snapshot(config),
+                },
+            )
+        )
+        return self._to_brand_config(config)
+
+    def rollback_brand_config(
+        self, project_id: int, payload: schemas.BrandConfigRollback
+    ) -> schemas.BrandConfig:
+        self._require_project(project_id)
+        target = self.session.scalar(
+            select(models.BrandConfig).where(
+                models.BrandConfig.project_id == project_id,
+                models.BrandConfig.version == payload.version,
+            )
+        )
+        if not target:
+            raise KeyError("brand_config_not_found")
+        if not target.is_stable:
+            raise ValueError("brand_config_not_stable")
+        latest = self.session.scalar(
+            select(models.BrandConfig)
+            .where(models.BrandConfig.project_id == project_id)
+            .order_by(models.BrandConfig.version.desc())
+        )
+        next_version = latest.version + 1 if latest else 1
+        for active_config in self.session.scalars(
+            select(models.BrandConfig).where(
+                models.BrandConfig.project_id == project_id,
+                models.BrandConfig.is_active.is_(True),
+            )
+        ):
+            active_config.is_active = False
+        config = models.BrandConfig(
+            project_id=project_id,
+            version=next_version,
+            is_active=True,
+            is_stable=False,
+            tone=target.tone,
+            audience=target.audience,
+            offers=target.offers,
+            rubrics=target.rubrics,
+            forbidden=target.forbidden,
+            cta_policy=target.cta_policy,
+        )
+        self.session.add(config)
+        self.session.flush()
+        self._record_brand_config_history(
+            project_id=project_id,
+            config=config,
+            previous=latest,
+            change_summary=payload.change_summary
+            or f"rollback_to_version_{target.version}",
+        )
+        return self._to_brand_config(config)
 
     def create_budget(self, project_id: int, payload: schemas.BudgetCreate) -> schemas.Budget:
         project = self._require_project(project_id)
@@ -575,15 +688,31 @@ class DatabaseStore:
             or None
         )
         next_version = latest.version + 1 if latest else 1
+        if payload.is_active:
+            for active_prompt in self.session.scalars(
+                select(models.PromptVersion).where(
+                    models.PromptVersion.project_id == project_id,
+                    models.PromptVersion.prompt_key == payload.prompt_key,
+                    models.PromptVersion.is_active.is_(True),
+                )
+            ):
+                active_prompt.is_active = False
         prompt = models.PromptVersion(
             project=project,
             prompt_key=payload.prompt_key,
             content=payload.content,
             version=next_version,
             is_active=payload.is_active,
+            is_stable=payload.is_stable,
         )
         self.session.add(prompt)
         self.session.flush()
+        self._record_prompt_history(
+            project_id=project_id,
+            prompt=prompt,
+            previous=latest,
+            change_summary=payload.change_summary,
+        )
         return self._to_prompt_version(prompt)
 
     def list_prompt_versions(self, project_id: int) -> List[schemas.PromptVersion]:
@@ -594,6 +723,113 @@ class DatabaseStore:
             )
         ).all()
         return [self._to_prompt_version(prompt) for prompt in prompts]
+
+    def list_prompt_version_history(
+        self, project_id: int
+    ) -> List[schemas.PromptVersionHistory]:
+        self._require_project(project_id)
+        history = self.session.scalars(
+            select(models.PromptVersionHistory)
+            .where(models.PromptVersionHistory.project_id == project_id)
+            .order_by(models.PromptVersionHistory.created_at.desc())
+        ).all()
+        return [self._to_prompt_version_history(entry) for entry in history]
+
+    def set_prompt_version_stable(
+        self, project_id: int, prompt_id: int, payload: schemas.StableVersionUpdate
+    ) -> schemas.PromptVersion:
+        prompt = self.session.get(models.PromptVersion, prompt_id)
+        if not prompt or prompt.project_id != project_id:
+            raise KeyError("prompt_version_not_found")
+        previous = self._prompt_snapshot(prompt)
+        prompt.is_stable = payload.is_stable
+        self.session.add(prompt)
+        self.session.flush()
+        self.session.add(
+            models.PromptVersionHistory(
+                project_id=project_id,
+                prompt_version_id=prompt.id,
+                prompt_key=prompt.prompt_key,
+                version=prompt.version,
+                change_summary="stable_status_changed",
+                change_payload={
+                    "previous": previous,
+                    "current": self._prompt_snapshot(prompt),
+                },
+            )
+        )
+        return self._to_prompt_version(prompt)
+
+    def rollback_prompt_version(
+        self, project_id: int, payload: schemas.PromptVersionRollback
+    ) -> schemas.PromptVersion:
+        self._require_project(project_id)
+        target = self.session.scalar(
+            select(models.PromptVersion).where(
+                models.PromptVersion.project_id == project_id,
+                models.PromptVersion.prompt_key == payload.prompt_key,
+                models.PromptVersion.version == payload.version,
+            )
+        )
+        if not target:
+            raise KeyError("prompt_version_not_found")
+        if not target.is_stable:
+            raise ValueError("prompt_version_not_stable")
+        latest = self.session.scalar(
+            select(models.PromptVersion)
+            .where(
+                models.PromptVersion.project_id == project_id,
+                models.PromptVersion.prompt_key == payload.prompt_key,
+            )
+            .order_by(models.PromptVersion.version.desc())
+        )
+        next_version = latest.version + 1 if latest else 1
+        for active_prompt in self.session.scalars(
+            select(models.PromptVersion).where(
+                models.PromptVersion.project_id == project_id,
+                models.PromptVersion.prompt_key == payload.prompt_key,
+                models.PromptVersion.is_active.is_(True),
+            )
+        ):
+            active_prompt.is_active = False
+        prompt = models.PromptVersion(
+            project_id=project_id,
+            prompt_key=target.prompt_key,
+            content=target.content,
+            version=next_version,
+            is_active=True,
+            is_stable=False,
+        )
+        self.session.add(prompt)
+        self.session.flush()
+        self._record_prompt_history(
+            project_id=project_id,
+            prompt=prompt,
+            previous=latest,
+            change_summary=payload.change_summary
+            or f"rollback_to_version_{target.version}",
+        )
+        return self._to_prompt_version(prompt)
+
+    def list_project_datasets(self, project_id: int) -> List[schemas.ProjectDataset]:
+        self._require_project(project_id)
+        datasets = self.session.scalars(
+            select(models.ProjectDataset).where(
+                models.ProjectDataset.project_id == project_id
+            )
+        ).all()
+        return [self._to_project_dataset(dataset) for dataset in datasets]
+
+    def list_project_vector_indexes(
+        self, project_id: int
+    ) -> List[schemas.ProjectVectorIndex]:
+        self._require_project(project_id)
+        indexes = self.session.scalars(
+            select(models.ProjectVectorIndex).where(
+                models.ProjectVectorIndex.project_id == project_id
+            )
+        ).all()
+        return [self._to_project_vector_index(index_) for index_ in indexes]
 
     def create_redirect_link(
         self, project_id: int, payload: schemas.RedirectLinkCreate
@@ -796,12 +1032,14 @@ class DatabaseStore:
             id=config.id,
             project_id=config.project_id,
             version=config.version,
+            is_active=config.is_active,
             tone=config.tone,
             audience=config.audience,
             offers=config.offers,
             rubrics=config.rubrics,
             forbidden=config.forbidden,
             cta_policy=config.cta_policy,
+            is_stable=config.is_stable,
             created_at=config.created_at,
         )
 
@@ -1017,8 +1255,133 @@ class DatabaseStore:
             content=prompt.content,
             version=prompt.version,
             is_active=prompt.is_active,
+            is_stable=prompt.is_stable,
             created_at=prompt.created_at,
         )
+
+    @staticmethod
+    def _to_brand_config_history(
+        entry: models.BrandConfigHistory,
+    ) -> schemas.BrandConfigHistory:
+        return schemas.BrandConfigHistory(
+            id=entry.id,
+            project_id=entry.project_id,
+            brand_config_id=entry.brand_config_id,
+            version=entry.version,
+            change_summary=entry.change_summary,
+            change_payload=entry.change_payload,
+            created_at=entry.created_at,
+        )
+
+    @staticmethod
+    def _to_prompt_version_history(
+        entry: models.PromptVersionHistory,
+    ) -> schemas.PromptVersionHistory:
+        return schemas.PromptVersionHistory(
+            id=entry.id,
+            project_id=entry.project_id,
+            prompt_version_id=entry.prompt_version_id,
+            prompt_key=entry.prompt_key,
+            version=entry.version,
+            change_summary=entry.change_summary,
+            change_payload=entry.change_payload,
+            created_at=entry.created_at,
+        )
+
+    @staticmethod
+    def _to_project_dataset(dataset: models.ProjectDataset) -> schemas.ProjectDataset:
+        return schemas.ProjectDataset(
+            id=dataset.id,
+            project_id=dataset.project_id,
+            name=dataset.name,
+            kind=dataset.kind,
+            storage_uri=dataset.storage_uri,
+            is_active=dataset.is_active,
+            created_at=dataset.created_at,
+        )
+
+    @staticmethod
+    def _to_project_vector_index(
+        index_: models.ProjectVectorIndex,
+    ) -> schemas.ProjectVectorIndex:
+        return schemas.ProjectVectorIndex(
+            id=index_.id,
+            project_id=index_.project_id,
+            name=index_.name,
+            provider=index_.provider,
+            embedding_dimension=index_.embedding_dimension,
+            metadata=index_.metadata,
+            created_at=index_.created_at,
+        )
+
+    @staticmethod
+    def _brand_config_snapshot(config: models.BrandConfig) -> dict:
+        return {
+            "id": config.id,
+            "version": config.version,
+            "is_active": config.is_active,
+            "is_stable": config.is_stable,
+            "tone": config.tone,
+            "audience": config.audience,
+            "offers": config.offers,
+            "rubrics": config.rubrics,
+            "forbidden": config.forbidden,
+            "cta_policy": config.cta_policy,
+        }
+
+    @staticmethod
+    def _prompt_snapshot(prompt: models.PromptVersion) -> dict:
+        return {
+            "id": prompt.id,
+            "prompt_key": prompt.prompt_key,
+            "version": prompt.version,
+            "is_active": prompt.is_active,
+            "is_stable": prompt.is_stable,
+            "content": prompt.content,
+        }
+
+    def _record_brand_config_history(
+        self,
+        project_id: int,
+        config: models.BrandConfig,
+        previous: Optional[models.BrandConfig],
+        change_summary: Optional[str],
+    ) -> None:
+        default_summary = "brand_config_created" if previous is None else "brand_config_updated"
+        history = models.BrandConfigHistory(
+            project_id=project_id,
+            brand_config_id=config.id,
+            version=config.version,
+            change_summary=change_summary or default_summary,
+            change_payload={
+                "previous": self._brand_config_snapshot(previous)
+                if previous
+                else None,
+                "current": self._brand_config_snapshot(config),
+            },
+        )
+        self.session.add(history)
+
+    def _record_prompt_history(
+        self,
+        project_id: int,
+        prompt: models.PromptVersion,
+        previous: Optional[models.PromptVersion],
+        change_summary: Optional[str],
+    ) -> None:
+        default_summary = "prompt_version_created" if previous is None else "prompt_version_updated"
+        history = models.PromptVersionHistory(
+            project_id=project_id,
+            prompt_version_id=prompt.id,
+            prompt_key=prompt.prompt_key,
+            version=prompt.version,
+            change_summary=change_summary or default_summary,
+            change_payload={
+                "previous": self._prompt_snapshot(previous) if previous else None,
+                "current": self._prompt_snapshot(prompt),
+            },
+        )
+        self.session.add(history)
 
     @staticmethod
     def _to_role(role: models.Role) -> schemas.Role:

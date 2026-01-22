@@ -5,6 +5,7 @@ from typing import List
 
 from .. import schemas
 from ..storage_db import DatabaseStore
+from .learning import AutoLearningService
 
 
 class PipelineService:
@@ -13,7 +14,9 @@ class PipelineService:
 
     def run(self, project_id: int, topic_id: int) -> dict:
         """Запускает упрощённый пайплайн и возвращает созданные сущности."""
-        self.store.get_topic(project_id, topic_id)
+        topic = self.store.get_topic(project_id, topic_id)
+        learning_service = AutoLearningService(self.store)
+        learning_params = learning_service.select_parameters(project_id)
         pack = self.store.create_content_pack(
             project_id,
             schemas.ContentPackCreate(topic_id=topic_id, description="auto"),
@@ -31,7 +34,12 @@ class PipelineService:
                     channel=channel,
                     format=fmt,
                     body=f"Черновик {fmt} для {channel} из темы {topic_id}",
-                    metadata={"generated_at": datetime.utcnow().isoformat()},
+                    metadata={
+                        "generated_at": datetime.utcnow().isoformat(),
+                        "slot": learning_params.get("slot", "default"),
+                        "cta": learning_params.get("cta", "standard"),
+                        "angle": topic.angle,
+                    },
                 ),
             )
             items.append(item)

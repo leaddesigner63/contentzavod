@@ -1,11 +1,15 @@
 from datetime import timedelta
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.responses import RedirectResponse
 
 from . import auth, schemas
 from .dependencies import get_store
+from .services.learning import AutoLearningService
+from .services.metrics import MetricsCollector
 from .services.pipeline import PipelineService
+from .services.redirects import RedirectService
 from .storage_db import DatabaseStore
 
 app = FastAPI(title="ContentZavod MVP")
@@ -103,6 +107,68 @@ def get_project(
         return store.get_project(project_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post(
+    "/projects/{project_id}/redirect-links", response_model=schemas.RedirectLink
+)
+def create_redirect_link(
+    project_id: int,
+    payload: schemas.RedirectLinkCreate,
+    store: DatabaseStore = Depends(get_store),
+    _: schemas.User = Depends(auth.require_roles("Admin", "Editor")),
+) -> schemas.RedirectLink:
+    try:
+        service = RedirectService(store)
+        return service.create_link(project_id, payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get(
+    "/projects/{project_id}/redirect-links", response_model=list[schemas.RedirectLink]
+)
+def list_redirect_links(
+    project_id: int,
+    store: DatabaseStore = Depends(get_store),
+    _: schemas.User = Depends(auth.require_roles("Admin", "Editor", "Viewer")),
+) -> list[schemas.RedirectLink]:
+    try:
+        return store.list_redirect_links(project_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get(
+    "/projects/{project_id}/redirect-links/{link_id}/clicks",
+    response_model=list[schemas.ClickEvent],
+)
+def list_click_events(
+    project_id: int,
+    link_id: int,
+    store: DatabaseStore = Depends(get_store),
+    _: schemas.User = Depends(auth.require_roles("Admin", "Editor", "Viewer")),
+) -> list[schemas.ClickEvent]:
+    try:
+        return store.list_click_events(project_id, redirect_link_id=link_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/r/{slug}")
+def resolve_redirect(
+    slug: str,
+    request: Request,
+    store: DatabaseStore = Depends(get_store),
+) -> RedirectResponse:
+    service = RedirectService(store)
+    try:
+        result = service.resolve(slug, request)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return RedirectResponse(result.redirect_url)
 
 @app.post("/projects/{project_id}/brand-configs", response_model=schemas.BrandConfig)
 def create_brand_config(
@@ -356,6 +422,20 @@ def create_metric_snapshot(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@app.post(
+    "/projects/{project_id}/metrics/collect",
+    response_model=list[schemas.MetricSnapshot],
+)
+def collect_metrics(
+    project_id: int,
+    store: DatabaseStore = Depends(get_store),
+    _: schemas.User = Depends(auth.require_roles("Admin", "Editor")),
+) -> list[schemas.MetricSnapshot]:
+    collector = MetricsCollector(store)
+    result = collector.collect(project_id)
+    return result.snapshots
+
+
 @app.get(
     "/projects/{project_id}/metrics", response_model=list[schemas.MetricSnapshot]
 )
@@ -398,6 +478,70 @@ def list_learning_events(
         return store.list_learning_events(project_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get(
+    "/projects/{project_id}/auto-learning/config",
+    response_model=schemas.AutoLearningConfig,
+)
+def get_auto_learning_config(
+    project_id: int,
+    store: DatabaseStore = Depends(get_store),
+    _: schemas.User = Depends(auth.require_roles("Admin", "Editor", "Viewer")),
+) -> schemas.AutoLearningConfig:
+    try:
+        return store.get_or_create_auto_learning_config(project_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.put(
+    "/projects/{project_id}/auto-learning/config",
+    response_model=schemas.AutoLearningConfig,
+)
+def update_auto_learning_config(
+    project_id: int,
+    payload: schemas.AutoLearningConfigCreate,
+    store: DatabaseStore = Depends(get_store),
+    _: schemas.User = Depends(auth.require_roles("Admin", "Editor")),
+) -> schemas.AutoLearningConfig:
+    try:
+        return store.upsert_auto_learning_config(project_id, payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get(
+    "/projects/{project_id}/auto-learning/state",
+    response_model=schemas.AutoLearningState,
+)
+def get_auto_learning_state(
+    project_id: int,
+    store: DatabaseStore = Depends(get_store),
+    _: schemas.User = Depends(auth.require_roles("Admin", "Editor", "Viewer")),
+) -> schemas.AutoLearningState:
+    try:
+        return store.get_or_create_auto_learning_state(project_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post(
+    "/projects/{project_id}/auto-learning/run",
+    response_model=dict,
+)
+def run_auto_learning(
+    project_id: int,
+    store: DatabaseStore = Depends(get_store),
+    _: schemas.User = Depends(auth.require_roles("Admin", "Editor")),
+) -> dict:
+    service = AutoLearningService(store)
+    result = service.run(project_id)
+    return {
+        "state": result.state,
+        "applied_changes": result.applied_changes,
+        "rollback_applied": result.rollback_applied,
+    }
 
 
 @app.post("/projects/{project_id}/pipelines/run")

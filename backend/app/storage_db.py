@@ -4,7 +4,7 @@ import os
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from . import models, schemas
@@ -398,6 +398,21 @@ class DatabaseStore:
         ).all()
         return [self._to_metric_snapshot(snapshot) for snapshot in snapshots]
 
+    def list_recent_metric_snapshots(
+        self, project_id: int, limit: int
+    ) -> List[models.MetricSnapshot]:
+        self._require_project(project_id)
+        return (
+            self.session.scalars(
+                select(models.MetricSnapshot)
+                .where(models.MetricSnapshot.project_id == project_id)
+                .order_by(desc(models.MetricSnapshot.collected_at))
+                .limit(limit)
+            )
+            .unique()
+            .all()
+        )
+
     def create_learning_event(
         self, project_id: int, payload: schemas.LearningEventCreate
     ) -> schemas.LearningEvent:
@@ -419,6 +434,90 @@ class DatabaseStore:
             select(models.LearningEvent).where(models.LearningEvent.project_id == project_id)
         ).all()
         return [self._to_learning_event(event) for event in events]
+
+    def get_or_create_auto_learning_config(
+        self, project_id: int
+    ) -> schemas.AutoLearningConfig:
+        self._require_project(project_id)
+        config = self.session.scalar(
+            select(models.AutoLearningConfig).where(
+                models.AutoLearningConfig.project_id == project_id
+            )
+        )
+        if config:
+            return self._to_auto_learning_config(config)
+        config = models.AutoLearningConfig(
+            project_id=project_id,
+            max_changes_per_week=2,
+            rollback_threshold=0.02,
+            rollback_window=20,
+            protected_parameters=[],
+        )
+        self.session.add(config)
+        self.session.flush()
+        return self._to_auto_learning_config(config)
+
+    def upsert_auto_learning_config(
+        self, project_id: int, payload: schemas.AutoLearningConfigCreate
+    ) -> schemas.AutoLearningConfig:
+        self._require_project(project_id)
+        config = self.session.scalar(
+            select(models.AutoLearningConfig).where(
+                models.AutoLearningConfig.project_id == project_id
+            )
+        )
+        if not config:
+            config = models.AutoLearningConfig(project_id=project_id)
+        config.max_changes_per_week = payload.max_changes_per_week
+        config.rollback_threshold = payload.rollback_threshold
+        config.rollback_window = payload.rollback_window
+        config.protected_parameters = payload.protected_parameters
+        self.session.add(config)
+        self.session.flush()
+        return self._to_auto_learning_config(config)
+
+    def get_or_create_auto_learning_state(
+        self, project_id: int
+    ) -> schemas.AutoLearningState:
+        self._require_project(project_id)
+        state = self.session.scalar(
+            select(models.AutoLearningState).where(
+                models.AutoLearningState.project_id == project_id
+            )
+        )
+        if state:
+            return self._to_auto_learning_state(state)
+        state = models.AutoLearningState(
+            project_id=project_id,
+            parameters={},
+            stable_parameters={},
+            window_started_at=None,
+            changes_in_window=0,
+        )
+        self.session.add(state)
+        self.session.flush()
+        return self._to_auto_learning_state(state)
+
+    def update_auto_learning_state(
+        self, project_id: int, payload: schemas.AutoLearningState
+    ) -> schemas.AutoLearningState:
+        self._require_project(project_id)
+        state = self.session.scalar(
+            select(models.AutoLearningState).where(
+                models.AutoLearningState.project_id == project_id
+            )
+        )
+        if not state:
+            state = models.AutoLearningState(project_id=project_id)
+        state.parameters = payload.parameters
+        state.stable_parameters = payload.stable_parameters
+        state.window_started_at = payload.window_started_at
+        state.changes_in_window = payload.changes_in_window
+        state.last_change_at = payload.last_change_at
+        state.last_rollback_at = payload.last_rollback_at
+        self.session.add(state)
+        self.session.flush()
+        return self._to_auto_learning_state(state)
 
     def create_prompt_version(
         self, project_id: int, payload: schemas.PromptVersionCreate
@@ -455,6 +554,118 @@ class DatabaseStore:
             )
         ).all()
         return [self._to_prompt_version(prompt) for prompt in prompts]
+
+    def create_redirect_link(
+        self, project_id: int, payload: schemas.RedirectLinkCreate
+    ) -> schemas.RedirectLink:
+        project = self._require_project(project_id)
+        content_item = None
+        if payload.content_item_id is not None:
+            content_item = self.session.get(models.ContentItem, payload.content_item_id)
+            if not content_item or content_item.project_id != project_id:
+                raise KeyError("content_item_not_found")
+        if not payload.slug:
+            raise ValueError("redirect_slug_required")
+        link = models.RedirectLink(
+            project=project,
+            content_item=content_item,
+            slug=payload.slug,
+            target_url=payload.target_url,
+            utm_params=payload.utm_params,
+            is_active=payload.is_active,
+        )
+        self.session.add(link)
+        self.session.flush()
+        return self._to_redirect_link(link)
+
+    def list_redirect_links(self, project_id: int) -> List[schemas.RedirectLink]:
+        self._require_project(project_id)
+        links = self.session.scalars(
+            select(models.RedirectLink).where(models.RedirectLink.project_id == project_id)
+        ).all()
+        return [self._to_redirect_link(link) for link in links]
+
+    def get_redirect_link_by_slug(self, slug: str) -> Optional[models.RedirectLink]:
+        return self.session.scalar(
+            select(models.RedirectLink).where(models.RedirectLink.slug == slug)
+        )
+
+    def create_click_event(
+        self,
+        project_id: int,
+        redirect_link_id: int,
+        content_item_id: Optional[int],
+        ip_address: Optional[str],
+        user_agent: Optional[str],
+        referrer: Optional[str],
+        utm_params: dict,
+        query_params: dict,
+    ) -> schemas.ClickEvent:
+        project = self._require_project(project_id)
+        link = self.session.get(models.RedirectLink, redirect_link_id)
+        if not link or link.project_id != project_id:
+            raise KeyError("redirect_link_not_found")
+        content_item = None
+        if content_item_id is not None:
+            content_item = self.session.get(models.ContentItem, content_item_id)
+            if not content_item or content_item.project_id != project_id:
+                raise KeyError("content_item_not_found")
+        event = models.ClickEvent(
+            project=project,
+            redirect_link=link,
+            content_item=content_item,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            referrer=referrer,
+            utm_params=utm_params,
+            query_params=query_params,
+        )
+        self.session.add(event)
+        self.session.flush()
+        return self._to_click_event(event)
+
+    def list_click_events(
+        self,
+        project_id: int,
+        redirect_link_id: Optional[int] = None,
+        content_item_id: Optional[int] = None,
+    ) -> List[schemas.ClickEvent]:
+        self._require_project(project_id)
+        query = select(models.ClickEvent).where(
+            models.ClickEvent.project_id == project_id
+        )
+        if redirect_link_id is not None:
+            query = query.where(models.ClickEvent.redirect_link_id == redirect_link_id)
+        if content_item_id is not None:
+            query = query.where(models.ClickEvent.content_item_id == content_item_id)
+        events = self.session.scalars(query).all()
+        return [self._to_click_event(event) for event in events]
+
+    def count_clicks(self, project_id: int, content_item_id: int) -> int:
+        self._require_project(project_id)
+        return int(
+            self.session.scalar(
+                select(func.count(models.ClickEvent.id)).where(
+                    models.ClickEvent.project_id == project_id,
+                    models.ClickEvent.content_item_id == content_item_id,
+                )
+            )
+            or 0
+        )
+
+    def get_integration_token_by_provider(
+        self, project_id: int, provider: str
+    ) -> Optional[schemas.IntegrationToken]:
+        self._require_project(project_id)
+        token = self.session.scalar(
+            select(models.IntegrationToken).where(
+                models.IntegrationToken.project_id == project_id,
+                models.IntegrationToken.provider == provider,
+            )
+        )
+        if not token:
+            return None
+        return self._to_integration_token(token)
 
     def create_integration_token(
         self, project_id: int, payload: schemas.IntegrationTokenCreate
@@ -668,6 +879,34 @@ class DatabaseStore:
         )
 
     @staticmethod
+    def _to_redirect_link(link: models.RedirectLink) -> schemas.RedirectLink:
+        return schemas.RedirectLink(
+            id=link.id,
+            project_id=link.project_id,
+            content_item_id=link.content_item_id,
+            target_url=link.target_url,
+            slug=link.slug,
+            utm_params=link.utm_params,
+            is_active=link.is_active,
+            created_at=link.created_at,
+        )
+
+    @staticmethod
+    def _to_click_event(event: models.ClickEvent) -> schemas.ClickEvent:
+        return schemas.ClickEvent(
+            id=event.id,
+            project_id=event.project_id,
+            redirect_link_id=event.redirect_link_id,
+            content_item_id=event.content_item_id,
+            ip_address=event.ip_address,
+            user_agent=event.user_agent,
+            referrer=event.referrer,
+            utm_params=event.utm_params,
+            query_params=event.query_params,
+            clicked_at=event.clicked_at,
+        )
+
+    @staticmethod
     def _to_learning_event(event: models.LearningEvent) -> schemas.LearningEvent:
         return schemas.LearningEvent(
             id=event.id,
@@ -677,6 +916,36 @@ class DatabaseStore:
             new_value=event.new_value,
             reason=event.reason,
             created_at=event.created_at,
+        )
+
+    @staticmethod
+    def _to_auto_learning_config(
+        config: models.AutoLearningConfig,
+    ) -> schemas.AutoLearningConfig:
+        return schemas.AutoLearningConfig(
+            id=config.id,
+            project_id=config.project_id,
+            max_changes_per_week=config.max_changes_per_week,
+            rollback_threshold=config.rollback_threshold,
+            rollback_window=config.rollback_window,
+            protected_parameters=config.protected_parameters,
+            created_at=config.created_at,
+        )
+
+    @staticmethod
+    def _to_auto_learning_state(
+        state: models.AutoLearningState,
+    ) -> schemas.AutoLearningState:
+        return schemas.AutoLearningState(
+            id=state.id,
+            project_id=state.project_id,
+            parameters=state.parameters,
+            stable_parameters=state.stable_parameters,
+            window_started_at=state.window_started_at,
+            changes_in_window=state.changes_in_window,
+            last_change_at=state.last_change_at,
+            last_rollback_at=state.last_rollback_at,
+            created_at=state.created_at,
         )
 
     @staticmethod

@@ -170,6 +170,33 @@ class MetricSnapshot(MetricSnapshotCreate):
     collected_at: datetime
 
 
+class RedirectLinkCreate(BaseModel):
+    content_item_id: Optional[int] = None
+    target_url: str
+    slug: Optional[str] = None
+    utm_params: dict = Field(default_factory=dict)
+    is_active: bool = True
+
+
+class RedirectLink(RedirectLinkCreate):
+    id: int
+    project_id: int
+    created_at: datetime
+
+
+class ClickEvent(BaseModel):
+    id: int
+    project_id: int
+    redirect_link_id: int
+    content_item_id: Optional[int] = None
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+    referrer: Optional[str] = None
+    utm_params: dict = Field(default_factory=dict)
+    query_params: dict = Field(default_factory=dict)
+    clicked_at: datetime
+
+
 class LearningEventCreate(BaseModel):
     parameter: str
     previous_value: str
@@ -180,6 +207,31 @@ class LearningEventCreate(BaseModel):
 class LearningEvent(LearningEventCreate):
     id: int
     project_id: int
+    created_at: datetime
+
+
+class AutoLearningConfigCreate(BaseModel):
+    max_changes_per_week: int = 2
+    rollback_threshold: float = 0.02
+    rollback_window: int = 20
+    protected_parameters: List[str] = Field(default_factory=list)
+
+
+class AutoLearningConfig(AutoLearningConfigCreate):
+    id: int
+    project_id: int
+    created_at: datetime
+
+
+class AutoLearningState(BaseModel):
+    id: int
+    project_id: int
+    parameters: dict = Field(default_factory=dict)
+    stable_parameters: dict = Field(default_factory=dict)
+    window_started_at: Optional[datetime] = None
+    changes_in_window: int = 0
+    last_change_at: Optional[datetime] = None
+    last_rollback_at: Optional[datetime] = None
     created_at: datetime
 
 

@@ -64,8 +64,20 @@ class Project(Base, TimestampMixin):
     metric_snapshots: Mapped[list[MetricSnapshot]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
+    redirect_links: Mapped[list[RedirectLink]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    click_events: Mapped[list[ClickEvent]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
     learning_events: Mapped[list[LearningEvent]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
+    )
+    auto_learning_config: Mapped[Optional[AutoLearningConfig]] = relationship(
+        back_populates="project", cascade="all, delete-orphan", uselist=False
+    )
+    auto_learning_state: Mapped[Optional[AutoLearningState]] = relationship(
+        back_populates="project", cascade="all, delete-orphan", uselist=False
     )
     prompt_versions: Mapped[list[PromptVersion]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
@@ -250,6 +262,12 @@ class ContentItem(Base, TimestampMixin):
     metric_snapshots: Mapped[list[MetricSnapshot]] = relationship(
         back_populates="content_item", cascade="all, delete-orphan"
     )
+    redirect_links: Mapped[list[RedirectLink]] = relationship(
+        back_populates="content_item", cascade="all, delete-orphan"
+    )
+    click_events: Mapped[list[ClickEvent]] = relationship(
+        back_populates="content_item", cascade="all, delete-orphan"
+    )
 
 
 class QcReport(Base, TimestampMixin):
@@ -305,6 +323,53 @@ class MetricSnapshot(Base):
     content_item: Mapped[ContentItem] = relationship(back_populates="metric_snapshots")
 
 
+class RedirectLink(Base, TimestampMixin):
+    __tablename__ = "redirect_links"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
+    content_item_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("content_items.id")
+    )
+    slug: Mapped[str] = mapped_column(String(64), unique=True)
+    target_url: Mapped[str] = mapped_column(Text)
+    utm_params: Mapped[dict] = mapped_column(JSON, default=dict)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    project: Mapped[Project] = relationship(back_populates="redirect_links")
+    content_item: Mapped[Optional[ContentItem]] = relationship(
+        back_populates="redirect_links"
+    )
+    click_events: Mapped[list[ClickEvent]] = relationship(
+        back_populates="redirect_link", cascade="all, delete-orphan"
+    )
+
+
+class ClickEvent(Base):
+    __tablename__ = "click_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
+    redirect_link_id: Mapped[int] = mapped_column(ForeignKey("redirect_links.id"))
+    content_item_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("content_items.id")
+    )
+    ip_address: Mapped[Optional[str]] = mapped_column(String(64))
+    user_agent: Mapped[Optional[str]] = mapped_column(Text)
+    referrer: Mapped[Optional[str]] = mapped_column(Text)
+    utm_params: Mapped[dict] = mapped_column(JSON, default=dict)
+    query_params: Mapped[dict] = mapped_column(JSON, default=dict)
+    clicked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow
+    )
+
+    project: Mapped[Project] = relationship(back_populates="click_events")
+    redirect_link: Mapped[RedirectLink] = relationship(back_populates="click_events")
+    content_item: Mapped[Optional[ContentItem]] = relationship(
+        back_populates="click_events"
+    )
+
+
 class LearningEvent(Base, TimestampMixin):
     __tablename__ = "learning_events"
 
@@ -316,6 +381,36 @@ class LearningEvent(Base, TimestampMixin):
     reason: Mapped[str] = mapped_column(Text)
 
     project: Mapped[Project] = relationship(back_populates="learning_events")
+
+
+class AutoLearningConfig(Base, TimestampMixin):
+    __tablename__ = "auto_learning_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), unique=True)
+    max_changes_per_week: Mapped[int] = mapped_column(Integer, default=2)
+    rollback_threshold: Mapped[float] = mapped_column(Float, default=0.02)
+    rollback_window: Mapped[int] = mapped_column(Integer, default=20)
+    protected_parameters: Mapped[list] = mapped_column(JSON, default=list)
+
+    project: Mapped[Project] = relationship(back_populates="auto_learning_config")
+
+
+class AutoLearningState(Base, TimestampMixin):
+    __tablename__ = "auto_learning_states"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), unique=True)
+    parameters: Mapped[dict] = mapped_column(JSON, default=dict)
+    stable_parameters: Mapped[dict] = mapped_column(JSON, default=dict)
+    window_started_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
+    changes_in_window: Mapped[int] = mapped_column(Integer, default=0)
+    last_change_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_rollback_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    project: Mapped[Project] = relationship(back_populates="auto_learning_state")
 
 
 class PromptVersion(Base, TimestampMixin):

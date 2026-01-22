@@ -278,6 +278,19 @@ class DatabaseStore:
         ).all()
         return [self._to_content_item(item) for item in items]
 
+    def update_content_item_metadata(
+        self, project_id: int, content_item_id: int, metadata_update: dict
+    ) -> schemas.ContentItem:
+        item = self.session.get(models.ContentItem, content_item_id)
+        if not item or item.project_id != project_id:
+            raise KeyError("content_item_not_found")
+        metadata = dict(item.metadata or {})
+        metadata.update(metadata_update)
+        item.metadata = metadata
+        self.session.add(item)
+        self.session.flush()
+        return self._to_content_item(item)
+
     def create_qc_report(
         self, project_id: int, payload: schemas.QcReportCreate
     ) -> schemas.QcReport:

@@ -4,13 +4,21 @@ from datetime import datetime
 from typing import List
 
 from .. import schemas
+from ..observability import get_logger
 from ..storage_db import DatabaseStore
+from .budgets import BudgetLimitExceeded, BudgetService
 from .learning import AutoLearningService
 
 
 class PipelineService:
     def __init__(self, store: DatabaseStore) -> None:
         self.store = store
+        self.logger = get_logger()
+        self.budgets = BudgetService(store)
+
+    @staticmethod
+    def _estimate_tokens(text: str) -> int:
+        return max(1, len(text.split()))
 
     def run(self, project_id: int, topic_id: int) -> dict:
         """Запускает упрощённый пайплайн и возвращает созданные сущности."""
@@ -42,6 +50,24 @@ class PipelineService:
                     },
                 ),
             )
+            tokens_estimate = self._estimate_tokens(item.body)
+            try:
+                self.budgets.record_usage(
+                    project_id,
+                    token_used=tokens_estimate,
+                )
+            except BudgetLimitExceeded:
+                self.logger.warning(
+                    "pipeline_budget_blocked",
+                    extra={
+                        "event": "pipeline_budget_blocked",
+                        "project_id": project_id,
+                        "content_item_id": item.id,
+                        "channel": channel,
+                        "format": fmt,
+                    },
+                )
+                raise
             items.append(item)
             self.store.create_qc_report(
                 project_id,

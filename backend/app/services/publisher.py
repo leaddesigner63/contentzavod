@@ -7,7 +7,10 @@ from typing import Any, Dict, Optional, Protocol
 from urllib import parse, request
 
 from .. import models, schemas
+from ..observability import get_logger
 from ..storage_db import DatabaseStore
+from .alerts import AlertService
+from .budgets import BudgetLimitExceeded, BudgetService
 
 
 class TaskQueue(Protocol):
@@ -111,6 +114,9 @@ class PublisherService:
         self.task_queue = task_queue
         self.max_attempts = max_attempts
         self.retry_delay_seconds = retry_delay_seconds
+        self.logger = get_logger()
+        self.alerts = AlertService(store)
+        self.budgets = BudgetService(store)
 
     def enqueue_publication(
         self, project_id: int, content_item_id: int, platform: str
@@ -143,6 +149,19 @@ class PublisherService:
         )
         if existing:
             return PublicationResult(publication=existing)
+        try:
+            self.budgets.record_usage(project_id, publications_used=1)
+        except BudgetLimitExceeded:
+            self.logger.warning(
+                "publication_budget_blocked",
+                extra={
+                    "event": "publication_budget_blocked",
+                    "project_id": project_id,
+                    "content_item_id": content_item_id,
+                    "platform": platform,
+                },
+            )
+            raise
         publication = self.store.create_publication(
             project_id,
             schemas.PublicationCreate(
@@ -237,6 +256,17 @@ class PublisherService:
         publication.last_error = error_message
         if publication.attempt_count >= self.max_attempts:
             publication.status = "failed"
+            self.alerts.create_alert(
+                publication.project_id,
+                alert_type="publication_failed",
+                severity="high",
+                message=error_message,
+                metadata={
+                    "publication_id": publication.id,
+                    "platform": publication.platform,
+                    "attempts": publication.attempt_count,
+                },
+            )
         else:
             publication.status = "scheduled"
             if self.task_queue:

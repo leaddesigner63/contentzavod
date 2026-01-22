@@ -316,6 +316,7 @@ class DatabaseStore:
             platform=payload.platform,
             scheduled_at=payload.scheduled_at,
             status=payload.status,
+            idempotency_key=payload.idempotency_key,
         )
         self.session.add(publication)
         self.session.flush()
@@ -325,6 +326,33 @@ class DatabaseStore:
         self._require_project(project_id)
         publications = self.session.scalars(
             select(models.Publication).where(models.Publication.project_id == project_id)
+        ).all()
+        return [self._to_publication(publication) for publication in publications]
+
+    def get_publication_by_idempotency_key(
+        self, project_id: int, idempotency_key: str
+    ) -> Optional[schemas.Publication]:
+        self._require_project(project_id)
+        publication = self.session.scalar(
+            select(models.Publication).where(
+                models.Publication.project_id == project_id,
+                models.Publication.idempotency_key == idempotency_key,
+            )
+        )
+        if not publication:
+            return None
+        return self._to_publication(publication)
+
+    def list_due_publications(
+        self, project_id: int, scheduled_before: datetime
+    ) -> List[schemas.Publication]:
+        self._require_project(project_id)
+        publications = self.session.scalars(
+            select(models.Publication).where(
+                models.Publication.project_id == project_id,
+                models.Publication.status == "scheduled",
+                models.Publication.scheduled_at <= scheduled_before,
+            )
         ).all()
         return [self._to_publication(publication) for publication in publications]
 
@@ -605,7 +633,11 @@ class DatabaseStore:
             scheduled_at=publication.scheduled_at,
             status=publication.status,
             platform_post_id=publication.platform_post_id,
+            platform_post_url=publication.platform_post_url,
             published_at=publication.published_at,
+            idempotency_key=publication.idempotency_key,
+            attempt_count=publication.attempt_count,
+            last_error=publication.last_error,
         )
 
     @staticmethod

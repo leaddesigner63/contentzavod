@@ -276,7 +276,11 @@ class Publication(Base):
     scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(32), default="scheduled")
     platform_post_id: Mapped[Optional[str]] = mapped_column(String(255))
+    platform_post_url: Mapped[Optional[str]] = mapped_column(String(512))
     published_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(128))
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[Optional[str]] = mapped_column(Text)
 
     project: Mapped[Project] = relationship(back_populates="publications")
     content_item: Mapped[ContentItem] = relationship(back_populates="publications")

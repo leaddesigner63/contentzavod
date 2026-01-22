@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { getRolesFromToken, hasAnyRole, type Role } from "../../lib/auth";
 import { apiFetch } from "../../lib/api";
 import { useLocalStorage } from "../../lib/useLocalStorage";
 
@@ -51,6 +52,11 @@ export default function VideoWorkshopPage() {
     "contentzavod-api-base",
     "http://localhost:8000"
   );
+  const roles = useMemo<Role[]>(
+    () => getRolesFromToken(token),
+    [token]
+  );
+  const canEdit = hasAnyRole(roles, ["Admin", "Editor"]);
 
   const [videoItems, setVideoItems] = useState<ContentItem[]>([]);
   const [packs, setPacks] = useState<ContentPack[]>([]);
@@ -66,6 +72,16 @@ export default function VideoWorkshopPage() {
     location: "studio",
     characters: [],
   };
+  const [styleAnchors, setStyleAnchors] = useState(defaultStyleAnchors);
+  const [clipDurations, setClipDurations] = useState("4,8,12");
+  const [postprocess, setPostprocess] = useState({
+    resolution: "1080p",
+    video_codec: "h264",
+    remove_audio: false,
+    audio_path: "",
+    cover_enabled: true,
+  });
+  const [manualContentItemId, setManualContentItemId] = useState("");
 
   const loadVideoData = useCallback(async () => {
     if (!projectId) return;
@@ -102,7 +118,7 @@ export default function VideoWorkshopPage() {
   }, [loadVideoData]);
 
   const runVideoWorkshop = async (contentItemId: number) => {
-    if (!projectId) return;
+    if (!projectId || !canEdit) return;
     setIsRunning((prev) => ({ ...prev, [contentItemId]: true }));
     try {
       await apiFetch(
@@ -111,7 +127,18 @@ export default function VideoWorkshopPage() {
           method: "POST",
           body: JSON.stringify({
             content_item_id: contentItemId,
-            style_anchors: defaultStyleAnchors,
+            style_anchors: styleAnchors,
+            clip_durations: clipDurations
+              .split(",")
+              .map((value) => Number(value.trim()))
+              .filter((value) => !Number.isNaN(value)),
+            postprocess: {
+              resolution: postprocess.resolution,
+              video_codec: postprocess.video_codec,
+              remove_audio: postprocess.remove_audio,
+              audio_path: postprocess.audio_path || null,
+              cover_enabled: postprocess.cover_enabled,
+            },
           }),
         },
         token,
@@ -130,6 +157,11 @@ export default function VideoWorkshopPage() {
       <section className="card">
         <h3>Очередь видео-цеха</h3>
         {error && <div className="notice">Ошибка: {error}</div>}
+        {!canEdit && (
+          <div className="notice">
+            Запуск видео доступен только ролям Admin и Editor.
+          </div>
+        )}
         <table className="table">
           <thead>
             <tr>
@@ -153,7 +185,7 @@ export default function VideoWorkshopPage() {
                   <button
                     className="button"
                     onClick={() => runVideoWorkshop(item.id)}
-                    disabled={isRunning[item.id]}
+                    disabled={isRunning[item.id] || !canEdit}
                   >
                     {isRunning[item.id] ? "Запуск..." : "Запустить"}
                   </button>
@@ -237,6 +269,202 @@ export default function VideoWorkshopPage() {
               )}
             </div>
           ))}
+        </div>
+      </section>
+
+      <section className="card">
+        <h3>Настройки запуска</h3>
+        {!canEdit && (
+          <div className="notice">
+            Доступно только для ролей Admin и Editor.
+          </div>
+        )}
+        <div className="grid">
+          <label>
+            Камера
+            <input
+              value={styleAnchors.camera}
+              onChange={(event) =>
+                setStyleAnchors((prev) => ({
+                  ...prev,
+                  camera: event.target.value,
+                }))
+              }
+              disabled={!canEdit}
+            />
+          </label>
+          <label>
+            Движение
+            <input
+              value={styleAnchors.movement}
+              onChange={(event) =>
+                setStyleAnchors((prev) => ({
+                  ...prev,
+                  movement: event.target.value,
+                }))
+              }
+              disabled={!canEdit}
+            />
+          </label>
+          <label>
+            Ракурс
+            <input
+              value={styleAnchors.angle}
+              onChange={(event) =>
+                setStyleAnchors((prev) => ({
+                  ...prev,
+                  angle: event.target.value,
+                }))
+              }
+              disabled={!canEdit}
+            />
+          </label>
+          <label>
+            Свет
+            <input
+              value={styleAnchors.lighting}
+              onChange={(event) =>
+                setStyleAnchors((prev) => ({
+                  ...prev,
+                  lighting: event.target.value,
+                }))
+              }
+              disabled={!canEdit}
+            />
+          </label>
+          <label>
+            Палитра
+            <input
+              value={styleAnchors.palette}
+              onChange={(event) =>
+                setStyleAnchors((prev) => ({
+                  ...prev,
+                  palette: event.target.value,
+                }))
+              }
+              disabled={!canEdit}
+            />
+          </label>
+          <label>
+            Локация
+            <input
+              value={styleAnchors.location}
+              onChange={(event) =>
+                setStyleAnchors((prev) => ({
+                  ...prev,
+                  location: event.target.value,
+                }))
+              }
+              disabled={!canEdit}
+            />
+          </label>
+        </div>
+        <label>
+          Персонажи (через запятую)
+          <input
+            value={styleAnchors.characters.join(", ")}
+            onChange={(event) =>
+              setStyleAnchors((prev) => ({
+                ...prev,
+                characters: event.target.value
+                  .split(",")
+                  .map((value) => value.trim())
+                  .filter(Boolean),
+              }))
+            }
+            disabled={!canEdit}
+          />
+        </label>
+        <label>
+          Длительности клипов (сек)
+          <input
+            value={clipDurations}
+            onChange={(event) => setClipDurations(event.target.value)}
+            disabled={!canEdit}
+          />
+        </label>
+        <div className="grid">
+          <label>
+            Разрешение
+            <input
+              value={postprocess.resolution}
+              onChange={(event) =>
+                setPostprocess((prev) => ({
+                  ...prev,
+                  resolution: event.target.value,
+                }))
+              }
+              disabled={!canEdit}
+            />
+          </label>
+          <label>
+            Кодек
+            <input
+              value={postprocess.video_codec}
+              onChange={(event) =>
+                setPostprocess((prev) => ({
+                  ...prev,
+                  video_codec: event.target.value,
+                }))
+              }
+              disabled={!canEdit}
+            />
+          </label>
+        </div>
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={postprocess.remove_audio}
+            onChange={(event) =>
+              setPostprocess((prev) => ({
+                ...prev,
+                remove_audio: event.target.checked,
+              }))
+            }
+            disabled={!canEdit}
+          />
+          Удалять аудио
+        </label>
+        <label>
+          Путь к аудио (если заменяем)
+          <input
+            value={postprocess.audio_path}
+            onChange={(event) =>
+              setPostprocess((prev) => ({
+                ...prev,
+                audio_path: event.target.value,
+              }))
+            }
+            disabled={!canEdit}
+          />
+        </label>
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={postprocess.cover_enabled}
+            onChange={(event) =>
+              setPostprocess((prev) => ({
+                ...prev,
+                cover_enabled: event.target.checked,
+              }))
+            }
+            disabled={!canEdit}
+          />
+          Генерировать обложку
+        </label>
+        <div className="row">
+          <input
+            placeholder="ID контент-единицы"
+            value={manualContentItemId}
+            onChange={(event) => setManualContentItemId(event.target.value)}
+            disabled={!canEdit}
+          />
+          <button
+            onClick={() => runVideoWorkshop(Number(manualContentItemId))}
+            disabled={!canEdit || !manualContentItemId}
+          >
+            Запустить вручную
+          </button>
         </div>
       </section>
 

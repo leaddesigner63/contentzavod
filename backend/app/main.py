@@ -4,7 +4,7 @@ import io
 import time
 import uuid
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile, status
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import RedirectResponse
 
@@ -13,11 +13,13 @@ from .dependencies import get_store
 from .observability import configure_logging, configure_tracing, get_logger
 from .services.alerts import AlertService
 from .services.budgets import BudgetService
+from .services.ingest import IngestService
 from .services.learning import AutoLearningService
 from .services.metrics import MetricsCollector
 from .services.pipeline import PipelineService
 from .services.redirects import RedirectService
 from .storage_db import DatabaseStore
+from .vector_store import VectorStore
 
 app = FastAPI(title="ContentZavod MVP")
 
@@ -359,6 +361,57 @@ def list_sources(
         return store.list_sources(project_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/projects/{project_id}/ingest/files", response_model=schemas.IngestResponse)
+async def ingest_file(
+    project_id: int,
+    file: UploadFile = File(...),
+    title: str | None = Form(None),
+    source_type: str | None = Form(None),
+    store: DatabaseStore = Depends(get_store),
+    _: schemas.User = Depends(auth.require_roles("Admin", "Editor")),
+) -> schemas.IngestResponse:
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="empty_file")
+    service = IngestService(store, vector_store=VectorStore(store.session))
+    try:
+        result = service.ingest_file(
+            project_id,
+            filename=file.filename or "upload.bin",
+            content=content,
+            content_type=file.content_type or "application/octet-stream",
+            title=title,
+            source_type=source_type,
+        )
+        return schemas.IngestResponse(source=result.source, atoms=result.atoms)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/projects/{project_id}/ingest/links", response_model=schemas.IngestResponse)
+def ingest_link(
+    project_id: int,
+    payload: schemas.IngestLinkRequest,
+    store: DatabaseStore = Depends(get_store),
+    _: schemas.User = Depends(auth.require_roles("Admin", "Editor")),
+) -> schemas.IngestResponse:
+    service = IngestService(store, vector_store=VectorStore(store.session))
+    try:
+        result = service.ingest_link(
+            project_id,
+            url=payload.url,
+            title=payload.title,
+            source_type=payload.source_type,
+        )
+        return schemas.IngestResponse(source=result.source, atoms=result.atoms)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/projects/{project_id}/atoms", response_model=schemas.Atom)

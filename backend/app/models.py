@@ -88,6 +88,9 @@ class Project(Base, TimestampMixin):
     integration_tokens: Mapped[list[IntegrationToken]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
+    alerts: Mapped[list[Alert]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
 
 
 class Role(Base, TimestampMixin):
@@ -441,3 +444,16 @@ class IntegrationToken(Base):
     )
 
     project: Mapped[Project] = relationship(back_populates="integration_tokens")
+
+
+class Alert(Base, TimestampMixin):
+    __tablename__ = "alerts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
+    alert_type: Mapped[str] = mapped_column(String(64))
+    severity: Mapped[str] = mapped_column(String(32))
+    message: Mapped[str] = mapped_column(Text)
+    metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+
+    project: Mapped[Project] = relationship(back_populates="alerts")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from datetime import datetime
 from typing import List, Optional
 
@@ -9,6 +10,13 @@ from sqlalchemy.orm import Session
 
 from . import models, schemas
 from .security import decrypt_secret, encrypt_secret
+
+
+@dataclass(frozen=True)
+class BudgetUsageTotals:
+    token_used: int
+    video_seconds_used: int
+    publications_used: int
 
 
 class DatabaseStore:
@@ -130,6 +138,17 @@ class DatabaseStore:
         ).all()
         return [self._to_budget(budget) for budget in budgets]
 
+    def get_latest_budget(self, project_id: int) -> Optional[schemas.Budget]:
+        self._require_project(project_id)
+        budget = self.session.scalar(
+            select(models.Budget)
+            .where(models.Budget.project_id == project_id)
+            .order_by(models.Budget.created_at.desc())
+        )
+        if not budget:
+            return None
+        return self._to_budget(budget)
+
     def create_budget_usage(
         self, project_id: int, payload: schemas.BudgetUsageCreate
     ) -> schemas.BudgetUsage:
@@ -155,6 +174,27 @@ class DatabaseStore:
             select(models.BudgetUsage).where(models.BudgetUsage.project_id == project_id)
         ).all()
         return [self._to_budget_usage(usage) for usage in usages]
+
+    def sum_budget_usage(
+        self, project_id: int, start: datetime, end: datetime
+    ) -> BudgetUsageTotals:
+        self._require_project(project_id)
+        totals = self.session.execute(
+            select(
+                func.coalesce(func.sum(models.BudgetUsage.token_used), 0),
+                func.coalesce(func.sum(models.BudgetUsage.video_seconds_used), 0),
+                func.coalesce(func.sum(models.BudgetUsage.publications_used), 0),
+            ).where(
+                models.BudgetUsage.project_id == project_id,
+                models.BudgetUsage.usage_date >= start,
+                models.BudgetUsage.usage_date <= end,
+            )
+        ).one()
+        return BudgetUsageTotals(
+            token_used=int(totals[0] or 0),
+            video_seconds_used=int(totals[1] or 0),
+            publications_used=int(totals[2] or 0),
+        )
 
     def create_source(self, project_id: int, payload: schemas.SourceCreate) -> schemas.Source:
         project = self._require_project(project_id)
@@ -714,6 +754,26 @@ class DatabaseStore:
             raise KeyError("integration_token_not_found")
         self.session.delete(token)
 
+    def create_alert(self, project_id: int, payload: schemas.AlertCreate) -> schemas.Alert:
+        project = self._require_project(project_id)
+        alert = models.Alert(
+            project=project,
+            alert_type=payload.alert_type,
+            severity=payload.severity,
+            message=payload.message,
+            metadata=payload.metadata,
+        )
+        self.session.add(alert)
+        self.session.flush()
+        return self._to_alert(alert)
+
+    def list_alerts(self, project_id: int) -> List[schemas.Alert]:
+        self._require_project(project_id)
+        alerts = self.session.scalars(
+            select(models.Alert).where(models.Alert.project_id == project_id)
+        ).all()
+        return [self._to_alert(alert) for alert in alerts]
+
     def _require_project(self, project_id: int) -> models.Project:
         project = self.session.get(models.Project, project_id)
         if not project:
@@ -988,4 +1048,16 @@ class DatabaseStore:
             token=decrypt_secret(token.token_encrypted),
             created_at=token.created_at,
             updated_at=token.updated_at,
+        )
+
+    @staticmethod
+    def _to_alert(alert: models.Alert) -> schemas.Alert:
+        return schemas.Alert(
+            id=alert.id,
+            project_id=alert.project_id,
+            alert_type=alert.alert_type,
+            severity=alert.severity,
+            message=alert.message,
+            metadata=alert.metadata,
+            created_at=alert.created_at,
         )

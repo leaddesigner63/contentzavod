@@ -262,6 +262,21 @@ class BudgetUsage(BudgetUsageCreate):
     created_at: datetime
 
 
+class BudgetWindowUsage(BaseModel):
+    window: str
+    token_used: int
+    video_seconds_used: int
+    publications_used: int
+
+
+class BudgetReport(BaseModel):
+    project_id: int
+    budget: Budget
+    windows: List[BudgetWindowUsage]
+    is_blocked: bool
+    generated_at: datetime
+
+
 class Role(BaseModel):
     id: int
     name: str
@@ -308,3 +323,16 @@ class IntegrationToken(BaseModel):
     token: str
     created_at: datetime
     updated_at: datetime
+
+
+class AlertCreate(BaseModel):
+    alert_type: str
+    severity: str
+    message: str
+    metadata: dict = Field(default_factory=dict)
+
+
+class Alert(AlertCreate):
+    id: int
+    project_id: int
+    created_at: datetime

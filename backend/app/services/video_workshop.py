@@ -8,7 +8,9 @@ from pathlib import Path
 from typing import Iterable, List, Optional, Protocol, Sequence
 from urllib import request
 
+from ..observability import get_logger
 from ..storage_db import DatabaseStore
+from .budgets import BudgetLimitExceeded, BudgetService
 
 
 @dataclass(frozen=True)
@@ -136,6 +138,8 @@ class VideoWorkshopService:
         self.storage = storage
         self.workdir = workdir
         self.ffmpeg_path = ffmpeg_path
+        self.logger = get_logger()
+        self.budgets = BudgetService(store)
 
     def generate_script_and_storyboard(
         self,
@@ -267,6 +271,23 @@ class VideoWorkshopService:
         script, storyboard = self.generate_script_and_storyboard(
             topic_title, topic_angle, style_anchors
         )
+        total_seconds = sum(frame.duration_seconds for frame in storyboard)
+        try:
+            self.budgets.record_usage(
+                project_id,
+                video_seconds_used=total_seconds,
+            )
+        except BudgetLimitExceeded:
+            self.logger.warning(
+                "video_budget_blocked",
+                extra={
+                    "event": "video_budget_blocked",
+                    "project_id": project_id,
+                    "content_item_id": content_item_id,
+                    "video_seconds": total_seconds,
+                },
+            )
+            raise
         plans = self.plan_clips(storyboard)
         clip_paths = self.generate_clips(plans, style_anchors)
         output_path, cover_path = self.post_process(

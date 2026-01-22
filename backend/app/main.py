@@ -1,11 +1,18 @@
 from datetime import timedelta
+import csv
+import io
+import time
+import uuid
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import RedirectResponse
 
 from . import auth, schemas
 from .dependencies import get_store
+from .observability import configure_logging, configure_tracing, get_logger
+from .services.alerts import AlertService
+from .services.budgets import BudgetService
 from .services.learning import AutoLearningService
 from .services.metrics import MetricsCollector
 from .services.pipeline import PipelineService
@@ -13,6 +20,34 @@ from .services.redirects import RedirectService
 from .storage_db import DatabaseStore
 
 app = FastAPI(title="ContentZavod MVP")
+
+
+@app.on_event("startup")
+def startup() -> None:
+    configure_logging()
+    configure_tracing(app)
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next) -> Response:
+    logger = get_logger()
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    start_time = time.time()
+    response = await call_next(request)
+    duration_ms = (time.time() - start_time) * 1000
+    logger.info(
+        "request_completed",
+        extra={
+            "event": "request_completed",
+            "request_id": request_id,
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": response.status_code,
+            "duration_ms": round(duration_ms, 2),
+        },
+    )
+    response.headers["X-Request-ID"] = request_id
+    return response
 
 
 @app.get("/health")
@@ -585,6 +620,58 @@ def list_budget_usages(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@app.get(
+    "/projects/{project_id}/budget-report", response_model=schemas.BudgetReport
+)
+def get_budget_report(
+    project_id: int,
+    store: DatabaseStore = Depends(get_store),
+    _: schemas.User = Depends(auth.require_roles("Admin", "Editor", "Viewer")),
+) -> schemas.BudgetReport:
+    service = BudgetService(store)
+    try:
+        return service.build_report(project_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/projects/{project_id}/budget-report/export")
+def export_budget_report(
+    project_id: int,
+    store: DatabaseStore = Depends(get_store),
+    _: schemas.User = Depends(auth.require_roles("Admin", "Editor")),
+) -> Response:
+    service = BudgetService(store)
+    try:
+        report = service.build_report(project_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(
+        [
+            "window",
+            "token_used",
+            "video_seconds_used",
+            "publications_used",
+        ]
+    )
+    for window in report.windows:
+        writer.writerow(
+            [
+                window.window,
+                window.token_used,
+                window.video_seconds_used,
+                window.publications_used,
+            ]
+        )
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=budget_report.csv"},
+    )
+
+
 @app.post(
     "/projects/{project_id}/prompt-versions", response_model=schemas.PromptVersion
 )
@@ -692,3 +779,16 @@ def delete_integration_token(
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return None
+
+
+@app.get("/projects/{project_id}/alerts", response_model=list[schemas.Alert])
+def list_alerts(
+    project_id: int,
+    store: DatabaseStore = Depends(get_store),
+    _: schemas.User = Depends(auth.require_roles("Admin", "Editor", "Viewer")),
+) -> list[schemas.Alert]:
+    service = AlertService(store)
+    try:
+        return service.store.list_alerts(project_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc

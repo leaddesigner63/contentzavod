@@ -456,6 +456,25 @@ class DatabaseStore:
         ).all()
         return [self._to_content_item(item) for item in items]
 
+    def get_content_item(
+        self, project_id: int, content_item_id: int
+    ) -> schemas.ContentItem:
+        item = self.session.get(models.ContentItem, content_item_id)
+        if not item or item.project_id != project_id:
+            raise KeyError("content_item_not_found")
+        return self._to_content_item(item)
+
+    def get_content_item_with_topic(
+        self, project_id: int, content_item_id: int
+    ) -> tuple[schemas.ContentItem, schemas.Topic]:
+        item = self.session.get(models.ContentItem, content_item_id)
+        if not item or item.project_id != project_id:
+            raise KeyError("content_item_not_found")
+        topic = item.content_pack.topic if item.content_pack else None
+        if not topic:
+            raise KeyError("topic_not_found")
+        return self._to_content_item(item), self._to_topic(topic)
+
     def update_content_item_metadata(
         self, project_id: int, content_item_id: int, metadata_update: dict
     ) -> schemas.ContentItem:
@@ -465,6 +484,17 @@ class DatabaseStore:
         metadata = dict(item.metadata or {})
         metadata.update(metadata_update)
         item.metadata = metadata
+        self.session.add(item)
+        self.session.flush()
+        return self._to_content_item(item)
+
+    def update_content_item_status(
+        self, project_id: int, content_item_id: int, status: str
+    ) -> schemas.ContentItem:
+        item = self.session.get(models.ContentItem, content_item_id)
+        if not item or item.project_id != project_id:
+            raise KeyError("content_item_not_found")
+        item.status = status
         self.session.add(item)
         self.session.flush()
         return self._to_content_item(item)

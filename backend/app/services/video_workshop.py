@@ -4,6 +4,7 @@ import json
 import subprocess
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable, List, Optional, Protocol, Sequence
 from urllib import request
@@ -140,6 +141,7 @@ class VideoWorkshopService:
         self.ffmpeg_path = ffmpeg_path
         self.logger = get_logger()
         self.budgets = BudgetService(store)
+        self.workdir.mkdir(parents=True, exist_ok=True)
 
     def generate_script_and_storyboard(
         self,
@@ -267,9 +269,10 @@ class VideoWorkshopService:
         topic_angle: str,
         style_anchors: StyleAnchors,
         postprocess: Optional[PostProcessOptions] = None,
+        clip_durations: Optional[Sequence[int]] = None,
     ) -> WorkshopResult:
         script, storyboard = self.generate_script_and_storyboard(
-            topic_title, topic_angle, style_anchors
+            topic_title, topic_angle, style_anchors, clip_durations or (4, 8, 12)
         )
         total_seconds = sum(frame.duration_seconds for frame in storyboard)
         try:
@@ -343,6 +346,7 @@ class VideoWorkshopService:
                 if cover_obj
                 else None
             ),
+            "video_updated_at": datetime.utcnow().isoformat(),
         }
         self.store.update_content_item_metadata(
             project_id, content_item_id, metadata_update
@@ -356,6 +360,62 @@ class VideoWorkshopService:
             final_video=final_obj,
             cover=cover_obj,
         )
+
+    def run_workshop(
+        self,
+        project_id: int,
+        content_item_id: int,
+        topic_title: str,
+        topic_angle: str,
+        style_anchors: StyleAnchors,
+        postprocess: Optional[PostProcessOptions] = None,
+        clip_durations: Optional[Sequence[int]] = None,
+    ) -> WorkshopResult:
+        self.store.update_content_item_status(
+            project_id, content_item_id, "running"
+        )
+        self.store.update_content_item_metadata(
+            project_id,
+            content_item_id,
+            {
+                "video_status": "running",
+                "video_started_at": datetime.utcnow().isoformat(),
+            },
+        )
+        try:
+            result = self.build_video_package(
+                project_id,
+                content_item_id,
+                topic_title,
+                topic_angle,
+                style_anchors,
+                postprocess,
+                clip_durations,
+            )
+        except Exception as exc:
+            self.store.update_content_item_status(
+                project_id, content_item_id, "failed"
+            )
+            self.store.update_content_item_metadata(
+                project_id,
+                content_item_id,
+                {
+                    "video_status": "failed",
+                    "video_error": str(exc),
+                    "video_failed_at": datetime.utcnow().isoformat(),
+                },
+            )
+            raise
+        self.store.update_content_item_status(project_id, content_item_id, "done")
+        self.store.update_content_item_metadata(
+            project_id,
+            content_item_id,
+            {
+                "video_status": "done",
+                "video_completed_at": datetime.utcnow().isoformat(),
+            },
+        )
+        return result
 
     def _run_ffmpeg(self, args: Sequence[str]) -> None:
         result = subprocess.run(

@@ -142,13 +142,17 @@ class PublicationCreate(BaseModel):
     platform: str
     scheduled_at: datetime
     status: str = "scheduled"
+    idempotency_key: Optional[str] = None
 
 
 class Publication(PublicationCreate):
     id: int
     project_id: int
     platform_post_id: Optional[str] = None
+    platform_post_url: Optional[str] = None
     published_at: Optional[datetime] = None
+    attempt_count: int = 0
+    last_error: Optional[str] = None
 
 
 class MetricSnapshotCreate(BaseModel):

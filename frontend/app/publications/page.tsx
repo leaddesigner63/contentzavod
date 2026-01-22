@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { getRolesFromToken, hasAnyRole, type Role } from "../../lib/auth";
 import { apiFetch } from "../../lib/api";
 import { useLocalStorage } from "../../lib/useLocalStorage";
 
@@ -55,6 +56,11 @@ export default function PublicationsPage() {
     "contentzavod-api-base",
     "http://localhost:8000"
   );
+  const roles = useMemo<Role[]>(
+    () => getRolesFromToken(token),
+    [token]
+  );
+  const canEdit = hasAnyRole(roles, ["Admin", "Editor"]);
 
   const [publications, setPublications] = useState<Publication[]>([]);
   const [form, setForm] = useState({
@@ -62,6 +68,8 @@ export default function PublicationsPage() {
     platform: "Telegram",
     scheduled_at: "",
   });
+  const [platformFilter, setPlatformFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [error, setError] = useState<string | null>(null);
 
   const loadPublications = useCallback(async () => {
@@ -85,7 +93,7 @@ export default function PublicationsPage() {
   }, [loadPublications]);
 
   const submitPublication = async () => {
-    if (!projectId) return;
+    if (!projectId || !canEdit) return;
     try {
       await apiFetch<Publication>(
         `/projects/${projectId}/publications`,
@@ -112,9 +120,100 @@ export default function PublicationsPage() {
     () => buildCalendar(publications),
     [publications]
   );
+  const filteredPublications = useMemo(() => {
+    return publications.filter((publication) => {
+      const platformOk =
+        platformFilter === "all" || publication.platform === platformFilter;
+      const statusOk =
+        statusFilter === "all" || publication.status === statusFilter;
+      return platformOk && statusOk;
+    });
+  }, [publications, platformFilter, statusFilter]);
+  const upcoming = useMemo(() => {
+    return publications
+      .filter((pub) => pub.scheduled_at)
+      .sort((a, b) => {
+        const left = new Date(a.scheduled_at).getTime();
+        const right = new Date(b.scheduled_at).getTime();
+        return left - right;
+      })
+      .slice(0, 5);
+  }, [publications]);
+  const stats = useMemo(() => {
+    const scheduled = publications.filter((pub) => pub.status === "scheduled")
+      .length;
+    const published = publications.filter((pub) => pub.status === "published")
+      .length;
+    const failed = publications.filter((pub) => pub.status === "failed").length;
+    return { scheduled, published, failed };
+  }, [publications]);
+  const platforms = useMemo(
+    () => Array.from(new Set(publications.map((pub) => pub.platform))),
+    [publications]
+  );
 
   return (
     <div className="section-grid">
+      <section className="card">
+        <h3>Сводка календаря</h3>
+        <div className="stats-grid">
+          <div className="stat-card">
+            <span className="label">Запланировано</span>
+            <strong>{stats.scheduled}</strong>
+          </div>
+          <div className="stat-card">
+            <span className="label">Опубликовано</span>
+            <strong>{stats.published}</strong>
+          </div>
+          <div className="stat-card">
+            <span className="label">С ошибкой</span>
+            <strong>{stats.failed}</strong>
+          </div>
+        </div>
+        <div className="filter-row">
+          <label>
+            Платформа
+            <select
+              value={platformFilter}
+              onChange={(event) => setPlatformFilter(event.target.value)}
+            >
+              <option value="all">Все</option>
+              {platforms.map((platform) => (
+                <option key={platform} value={platform}>
+                  {platform}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Статус
+            <select
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value)}
+            >
+              <option value="all">Все</option>
+              <option value="scheduled">scheduled</option>
+              <option value="published">published</option>
+              <option value="failed">failed</option>
+            </select>
+          </label>
+        </div>
+        <div className="list">
+          <strong>Ближайшие публикации</strong>
+          {upcoming.length === 0 && <span className="muted">Нет данных.</span>}
+          {upcoming.map((pub) => (
+            <div key={`upcoming-${pub.id}`} className="row">
+              <span>
+                {pub.platform} #{pub.content_item_id}
+              </span>
+              <span className="muted">
+                {new Date(pub.scheduled_at).toLocaleString("ru-RU")}
+              </span>
+            </div>
+          ))}
+        </div>
+      </section>
+
       <section className="card">
         <h3>Календарь публикаций</h3>
         {error && <div className="notice">Ошибка: {error}</div>}
@@ -145,7 +244,7 @@ export default function PublicationsPage() {
             </tr>
           </thead>
           <tbody>
-            {publications.map((pub) => (
+            {filteredPublications.map((pub) => (
               <tr key={pub.id}>
                 <td>{pub.id}</td>
                 <td>{pub.content_item_id}</td>
@@ -162,6 +261,11 @@ export default function PublicationsPage() {
 
       <section className="card">
         <h3>Запланировать публикацию</h3>
+        {!canEdit && (
+          <div className="notice">
+            Доступно только для ролей Admin и Editor.
+          </div>
+        )}
         <input
           placeholder="ID контент-единицы"
           value={form.content_item_id}
@@ -171,12 +275,14 @@ export default function PublicationsPage() {
               content_item_id: event.target.value,
             }))
           }
+          disabled={!canEdit}
         />
         <select
           value={form.platform}
           onChange={(event) =>
             setForm((prev) => ({ ...prev, platform: event.target.value }))
           }
+          disabled={!canEdit}
         >
           <option value="Telegram">Telegram</option>
           <option value="VK">VK</option>
@@ -192,8 +298,11 @@ export default function PublicationsPage() {
               scheduled_at: event.target.value,
             }))
           }
+          disabled={!canEdit}
         />
-        <button onClick={submitPublication}>Запланировать</button>
+        <button onClick={submitPublication} disabled={!canEdit}>
+          Запланировать
+        </button>
       </section>
     </div>
   );

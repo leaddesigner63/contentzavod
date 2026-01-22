@@ -80,6 +80,24 @@ main {
   border-bottom: 1px solid var(--border);
 }
 
+.role-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 140px;
+}
+
+.role-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .topbar input {
   padding: 8px 12px;
   border-radius: 8px;
@@ -91,6 +109,34 @@ main {
   display: grid;
   gap: 24px;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.stat-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: #f8fafc;
+}
+
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .card {
@@ -204,6 +250,30 @@ textarea {
 .list {
   display: flex;
   flex-direction: column;
+  gap: 8px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.checkbox {
+  display: flex;
+  align-items: center;
   gap: 8px;
 }
 

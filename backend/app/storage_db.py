@@ -317,6 +317,11 @@ class DatabaseStore:
             source_type=payload.source_type,
             uri=payload.uri,
             content=payload.content,
+            artifact_uri=payload.artifact_uri,
+            artifact_version=payload.artifact_version,
+            artifact_metadata=payload.artifact_metadata,
+            status=payload.status,
+            is_current=payload.is_current,
         )
         self.session.add(source)
         self.session.flush()
@@ -328,6 +333,19 @@ class DatabaseStore:
             select(models.Source).where(models.Source.project_id == project_id)
         ).all()
         return [self._to_source(source) for source in sources]
+
+    def update_source(
+        self, project_id: int, source_id: int, payload: schemas.SourceUpdate
+    ) -> schemas.Source:
+        source = self.session.get(models.Source, source_id)
+        if not source or source.project_id != project_id:
+            raise KeyError("source_not_found")
+        updates = payload.model_dump(exclude_unset=True)
+        for field_name, value in updates.items():
+            setattr(source, field_name, value)
+        self.session.add(source)
+        self.session.flush()
+        return self._to_source(source)
 
     def create_atom(self, project_id: int, payload: schemas.AtomCreate) -> schemas.Atom:
         project = self._require_project(project_id)
@@ -341,6 +359,13 @@ class DatabaseStore:
             text=payload.text,
             source_backed=payload.source_backed,
             embedding=payload.embedding,
+            source_uri=payload.source_uri,
+            source_version=payload.source_version,
+            artifact_uri=payload.artifact_uri,
+            artifact_version=payload.artifact_version,
+            artifact_metadata=payload.artifact_metadata,
+            status=payload.status,
+            is_current=payload.is_current,
         )
         self.session.add(atom)
         self.session.flush()
@@ -1079,6 +1104,11 @@ class DatabaseStore:
             source_type=source.source_type,
             uri=source.uri,
             content=source.content,
+            artifact_uri=source.artifact_uri,
+            artifact_version=source.artifact_version,
+            artifact_metadata=source.artifact_metadata,
+            status=source.status,
+            is_current=source.is_current,
             created_at=source.created_at,
         )
 
@@ -1092,6 +1122,13 @@ class DatabaseStore:
             text=atom.text,
             source_backed=atom.source_backed,
             embedding=atom.embedding,
+            source_uri=atom.source_uri,
+            source_version=atom.source_version,
+            artifact_uri=atom.artifact_uri,
+            artifact_version=atom.artifact_version,
+            artifact_metadata=atom.artifact_metadata,
+            status=atom.status,
+            is_current=atom.is_current,
             created_at=atom.created_at,
         )
 

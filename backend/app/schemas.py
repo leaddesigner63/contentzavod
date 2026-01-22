@@ -74,6 +74,11 @@ class SourceCreate(BaseModel):
     source_type: str
     uri: Optional[str] = None
     content: Optional[str] = None
+    artifact_uri: Optional[str] = None
+    artifact_version: int = 1
+    artifact_metadata: dict = Field(default_factory=dict)
+    status: str = "new"
+    is_current: bool = True
 
 
 class Source(SourceCreate):
@@ -82,12 +87,31 @@ class Source(SourceCreate):
     created_at: datetime
 
 
+class SourceUpdate(BaseModel):
+    title: Optional[str] = None
+    source_type: Optional[str] = None
+    uri: Optional[str] = None
+    content: Optional[str] = None
+    artifact_uri: Optional[str] = None
+    artifact_version: Optional[int] = None
+    artifact_metadata: Optional[dict] = None
+    status: Optional[str] = None
+    is_current: Optional[bool] = None
+
+
 class AtomCreate(BaseModel):
     source_id: int
     kind: str
     text: str
     source_backed: bool
     embedding: Optional[List[float]] = None
+    source_uri: Optional[str] = None
+    source_version: Optional[int] = None
+    artifact_uri: Optional[str] = None
+    artifact_version: Optional[int] = None
+    artifact_metadata: dict = Field(default_factory=dict)
+    status: str = "new"
+    is_current: bool = True
 
 
 class Atom(BaseModel):
@@ -98,7 +122,25 @@ class Atom(BaseModel):
     text: str
     source_backed: bool
     embedding: Optional[List[float]] = None
+    source_uri: Optional[str] = None
+    source_version: Optional[int] = None
+    artifact_uri: Optional[str] = None
+    artifact_version: Optional[int] = None
+    artifact_metadata: dict = Field(default_factory=dict)
+    status: str = "new"
+    is_current: bool = True
     created_at: datetime
+
+
+class IngestLinkRequest(BaseModel):
+    url: str
+    title: Optional[str] = None
+    source_type: str = "link"
+
+
+class IngestResponse(BaseModel):
+    source: Source
+    atoms: List[Atom]
 
 
 class TopicCreate(BaseModel):

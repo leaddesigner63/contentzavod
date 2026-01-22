@@ -247,6 +247,11 @@ class Source(Base, TimestampMixin):
     source_type: Mapped[str] = mapped_column(String(64))
     uri: Mapped[Optional[str]] = mapped_column(Text)
     content: Mapped[Optional[str]] = mapped_column(Text)
+    artifact_uri: Mapped[Optional[str]] = mapped_column(Text)
+    artifact_version: Mapped[int] = mapped_column(Integer, default=1)
+    artifact_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(32), default="new")
+    is_current: Mapped[bool] = mapped_column(Boolean, default=True)
 
     project: Mapped[Project] = relationship(back_populates="sources")
     atoms: Mapped[list[Atom]] = relationship(
@@ -264,6 +269,13 @@ class Atom(Base, TimestampMixin):
     text: Mapped[str] = mapped_column(Text)
     source_backed: Mapped[bool] = mapped_column(Boolean)
     embedding: Mapped[Optional[list[float]]] = mapped_column(Vector(1536))
+    source_uri: Mapped[Optional[str]] = mapped_column(Text)
+    source_version: Mapped[Optional[int]] = mapped_column(Integer)
+    artifact_uri: Mapped[Optional[str]] = mapped_column(Text)
+    artifact_version: Mapped[Optional[int]] = mapped_column(Integer)
+    artifact_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(32), default="new")
+    is_current: Mapped[bool] = mapped_column(Boolean, default=True)
 
     project: Mapped[Project] = relationship(back_populates="atoms")
     source: Mapped[Source] = relationship(back_populates="atoms")

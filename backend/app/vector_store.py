@@ -34,6 +34,9 @@ class VectorStore:
         )
         return self.session.scalars(stmt).all()
 
+    def get_embedding_dimension(self, project_id: int) -> int:
+        return self._require_project_index(project_id).embedding_dimension
+
     def _require_project_index(self, project_id: int) -> models.ProjectVectorIndex:
         index = self.session.scalar(
             select(models.ProjectVectorIndex).where(

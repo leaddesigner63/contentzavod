@@ -17,6 +17,7 @@ from .services.ingest import IngestService
 from .services.learning import AutoLearningService
 from .services.metrics import MetricsCollector
 from .services.pipeline import PipelineService
+from .services.planner import PlannerService
 from .services.redirects import RedirectService
 from .storage_db import DatabaseStore
 from .vector_store import VectorStore
@@ -206,6 +207,40 @@ def resolve_redirect(
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return RedirectResponse(result.redirect_url)
+
+
+@app.post(
+    "/projects/{project_id}/planning/period",
+    response_model=schemas.PlanPeriodResponse,
+)
+def plan_period(
+    project_id: int,
+    payload: schemas.PlanPeriodRequest,
+    store: DatabaseStore = Depends(get_store),
+    _: schemas.User = Depends(auth.require_roles("Admin", "Editor")),
+) -> schemas.PlanPeriodResponse:
+    service = PlannerService(store)
+    try:
+        result = service.plan_period(
+            project_id,
+            start_date=payload.start_date,
+            days=payload.days,
+            rubrics=payload.rubrics,
+            rubric_weights=payload.rubric_weights,
+            channels=payload.channels,
+            channel_slots=payload.channel_slots,
+            channel_frequency=payload.channel_frequency,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return schemas.PlanPeriodResponse(
+        topics=result.topics,
+        content_packs=result.content_packs,
+        content_items=result.content_items,
+        publications=result.publications,
+    )
 
 @app.post("/projects/{project_id}/brand-configs", response_model=schemas.BrandConfig)
 def create_brand_config(

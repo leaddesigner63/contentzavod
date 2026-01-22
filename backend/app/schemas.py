@@ -27,13 +27,31 @@ class BrandConfigCreate(BaseModel):
     rubrics: List[str] = []
     forbidden: List[str] = []
     cta_policy: str
+    change_summary: Optional[str] = None
+    is_stable: bool = False
 
 
 class BrandConfig(BrandConfigCreate):
     id: int
     project_id: int
     version: int
+    is_active: bool = True
     created_at: datetime
+
+
+class BrandConfigHistory(BaseModel):
+    id: int
+    project_id: int
+    brand_config_id: int
+    version: int
+    change_summary: Optional[str] = None
+    change_payload: dict = Field(default_factory=dict)
+    created_at: datetime
+
+
+class BrandConfigRollback(BaseModel):
+    version: int
+    change_summary: Optional[str] = None
 
 
 class BudgetCreate(BaseModel):
@@ -239,12 +257,55 @@ class PromptVersionCreate(BaseModel):
     prompt_key: str
     content: str
     is_active: bool = True
+    is_stable: bool = False
+    change_summary: Optional[str] = None
 
 
 class PromptVersion(PromptVersionCreate):
     id: int
     project_id: int
     version: int
+    created_at: datetime
+
+
+class PromptVersionHistory(BaseModel):
+    id: int
+    project_id: int
+    prompt_version_id: int
+    prompt_key: str
+    version: int
+    change_summary: Optional[str] = None
+    change_payload: dict = Field(default_factory=dict)
+    created_at: datetime
+
+
+class PromptVersionRollback(BaseModel):
+    prompt_key: str
+    version: int
+    change_summary: Optional[str] = None
+
+
+class StableVersionUpdate(BaseModel):
+    is_stable: bool = True
+
+
+class ProjectDataset(BaseModel):
+    id: int
+    project_id: int
+    name: str
+    kind: str
+    storage_uri: Optional[str] = None
+    is_active: bool = True
+    created_at: datetime
+
+
+class ProjectVectorIndex(BaseModel):
+    id: int
+    project_id: int
+    name: str
+    provider: str
+    embedding_dimension: int
+    metadata: dict = Field(default_factory=dict)
     created_at: datetime
 
 

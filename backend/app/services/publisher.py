@@ -32,56 +32,6 @@ class PublicationResult:
     task_id: Optional[str] = None
 
 
-@dataclass
-class TaskEntry:
-    task_id: str
-    task_name: str
-    payload: dict
-    run_at: datetime
-    idempotency_key: Optional[str] = None
-    attempts: int = 0
-
-
-class InMemoryTaskQueue:
-    def __init__(self) -> None:
-        self._tasks: list[TaskEntry] = []
-        self._idempotency_index: set[str] = set()
-        self._counter = 0
-
-    def enqueue(
-        self,
-        task_name: str,
-        payload: dict,
-        run_at: Optional[datetime] = None,
-        idempotency_key: Optional[str] = None,
-    ) -> str:
-        if idempotency_key and idempotency_key in self._idempotency_index:
-            return idempotency_key
-        self._counter += 1
-        task_id = idempotency_key or f"task-{self._counter}"
-        run_at = run_at or datetime.utcnow()
-        entry = TaskEntry(
-            task_id=task_id,
-            task_name=task_name,
-            payload=payload,
-            run_at=run_at,
-            idempotency_key=idempotency_key,
-        )
-        self._tasks.append(entry)
-        if idempotency_key:
-            self._idempotency_index.add(idempotency_key)
-        return task_id
-
-    def pop_due(self, now: Optional[datetime] = None) -> list[TaskEntry]:
-        now = now or datetime.utcnow()
-        due = [task for task in self._tasks if task.run_at <= now]
-        self._tasks = [task for task in self._tasks if task.run_at > now]
-        return due
-
-    def mark_done(self, task_id: str) -> None:
-        self._idempotency_index.discard(task_id)
-
-
 class PublicationScheduler:
     """Простейший cron/beat для постановки публикаций в очередь."""
 
@@ -111,11 +61,13 @@ class PublisherService:
         task_queue: Optional[TaskQueue] = None,
         max_attempts: int = 3,
         retry_delay_seconds: int = 60,
+        max_retry_delay_seconds: int = 900,
     ) -> None:
         self.store = store
         self.task_queue = task_queue
         self.max_attempts = max_attempts
         self.retry_delay_seconds = retry_delay_seconds
+        self.max_retry_delay_seconds = max_retry_delay_seconds
         self.logger = get_logger()
         self.alerts = AlertService(store)
         self.budgets = BudgetService(store)
@@ -151,19 +103,6 @@ class PublisherService:
         )
         if existing:
             return PublicationResult(publication=existing)
-        try:
-            self.budgets.record_usage(project_id, publications_used=1)
-        except BudgetLimitExceeded:
-            self.logger.warning(
-                "publication_budget_blocked",
-                extra={
-                    "event": "publication_budget_blocked",
-                    "project_id": project_id,
-                    "content_item_id": content_item_id,
-                    "platform": platform,
-                },
-            )
-            raise
         publication = self.store.create_publication(
             project_id,
             schemas.PublicationCreate(
@@ -203,6 +142,22 @@ class PublisherService:
         publication.last_error = None
         self.store.session.add(publication)
         self.store.session.flush()
+        try:
+            self.budgets.record_usage(
+                project_id,
+                publications_used=1,
+                usage_date=published_at,
+            )
+        except BudgetLimitExceeded as exc:
+            self.logger.warning(
+                "publication_budget_exceeded_after_publish",
+                extra={
+                    "event": "publication_budget_exceeded_after_publish",
+                    "project_id": project_id,
+                    "publication_id": publication_id,
+                    "reason": exc.reason,
+                },
+            )
         return self.store._to_publication(publication)
 
     def process_due_publications(
@@ -231,6 +186,20 @@ class PublisherService:
             return self.store._to_publication(publication)
         if publication.status == "publishing":
             return self.store._to_publication(publication)
+        try:
+            self.budgets.ensure_budget(project_id, publications_used=1)
+        except BudgetLimitExceeded as exc:
+            publication.status = "failed"
+            publication.last_error = exc.reason
+            self.store.session.add(publication)
+            self.store.session.flush()
+            return self.store._to_publication(publication)
+        except KeyError:
+            publication.status = "failed"
+            publication.last_error = "budget_not_found"
+            self.store.session.add(publication)
+            self.store.session.flush()
+            return self.store._to_publication(publication)
         publication.status = "publishing"
         publication.attempt_count += 1
         self.store.session.add(publication)
@@ -245,18 +214,6 @@ class PublisherService:
             result["platform_post_id"],
             platform_post_url=result.get("platform_post_url"),
         )
-
-    def process_queue(self, now: Optional[datetime] = None) -> list[schemas.Publication]:
-        if not isinstance(self.task_queue, InMemoryTaskQueue):
-            return []
-        results: list[schemas.Publication] = []
-        for task in self.task_queue.pop_due(now):
-            if task.task_name == "publish_content":
-                publication_id = task.payload.get("publication_id")
-                project_id = task.payload.get("project_id")
-                if publication_id and project_id:
-                    results.append(self.publish_publication(project_id, publication_id))
-        return results
 
     def _handle_publish_error(
         self, publication: models.Publication, error_message: str
@@ -278,9 +235,11 @@ class PublisherService:
         else:
             publication.status = "scheduled"
             if self.task_queue:
-                run_at = datetime.utcnow() + timedelta(
-                    seconds=self.retry_delay_seconds
+                delay_seconds = min(
+                    self.retry_delay_seconds * (2 ** (publication.attempt_count - 1)),
+                    self.max_retry_delay_seconds,
                 )
+                run_at = datetime.utcnow() + timedelta(seconds=delay_seconds)
                 self.task_queue.enqueue(
                     "publish_content",
                     {"publication_id": publication.id, "project_id": publication.project_id},

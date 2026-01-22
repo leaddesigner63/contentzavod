@@ -1,5 +1,5 @@
-from datetime import datetime
-from typing import List, Optional
+from datetime import date, datetime
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field, EmailStr
 
@@ -255,6 +255,23 @@ class ClickEvent(BaseModel):
     utm_params: dict = Field(default_factory=dict)
     query_params: dict = Field(default_factory=dict)
     clicked_at: datetime
+
+
+class PlanPeriodRequest(BaseModel):
+    start_date: Optional[date] = None
+    days: int = 14
+    channels: List[str] = Field(default_factory=lambda: ["telegram", "vk"])
+    rubrics: Optional[List[str]] = None
+    rubric_weights: Dict[str, float] = Field(default_factory=dict)
+    channel_slots: Dict[str, List[str]] = Field(default_factory=dict)
+    channel_frequency: Dict[str, int] = Field(default_factory=dict)
+
+
+class PlanPeriodResponse(BaseModel):
+    topics: List[Topic]
+    content_packs: List[ContentPack]
+    content_items: List[ContentItem]
+    publications: List[Publication]
 
 
 class LearningEventCreate(BaseModel):

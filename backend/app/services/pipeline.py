@@ -8,13 +8,17 @@ from ..observability import get_logger
 from ..storage_db import DatabaseStore
 from .budgets import BudgetLimitExceeded, BudgetService
 from .learning import AutoLearningService
+from .video_workshop import StyleAnchors, VideoWorkshopService
 
 
 class PipelineService:
-    def __init__(self, store: DatabaseStore) -> None:
+    def __init__(
+        self, store: DatabaseStore, video_workshop: VideoWorkshopService | None = None
+    ) -> None:
         self.store = store
         self.logger = get_logger()
         self.budgets = BudgetService(store)
+        self.video_workshop = video_workshop
 
     @staticmethod
     def _estimate_tokens(text: str) -> int:
@@ -77,5 +81,42 @@ class PipelineService:
                     passed=True,
                     reasons=["auto-qc-pass"],
                 ),
+            )
+        video_item = self.store.create_content_item(
+            project_id,
+            schemas.ContentItemCreate(
+                pack_id=pack.id,
+                channel="video",
+                format="video",
+                body=f"Черновик видео для темы {topic_id}",
+                metadata={
+                    "generated_at": datetime.utcnow().isoformat(),
+                    "slot": learning_params.get("slot", "default"),
+                    "cta": learning_params.get("cta", "standard"),
+                    "angle": topic.angle,
+                    "topic_title": topic.title,
+                    "topic_angle": topic.angle,
+                    "video_status": "queued",
+                },
+            ),
+        )
+        self.store.update_content_item_status(project_id, video_item.id, "queued")
+        items.append(video_item)
+        if self.video_workshop:
+            style_anchors = StyleAnchors(
+                camera="cinematic",
+                movement="smooth",
+                angle="wide",
+                lighting="soft",
+                palette="warm",
+                location="studio",
+                characters=(),
+            )
+            self.video_workshop.run_workshop(
+                project_id,
+                video_item.id,
+                topic.title,
+                topic.angle,
+                style_anchors,
             )
         return {"pack": pack, "items": items}

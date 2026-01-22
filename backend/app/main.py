@@ -1,8 +1,10 @@
 from datetime import timedelta
+import os
 import csv
 import io
 import time
 import uuid
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -12,17 +14,43 @@ from . import auth, schemas
 from .dependencies import get_store
 from .observability import configure_logging, configure_tracing, get_logger
 from .services.alerts import AlertService
-from .services.budgets import BudgetService
+from .services.budgets import BudgetLimitExceeded, BudgetService
 from .services.ingest import IngestService
 from .services.learning import AutoLearningService
 from .services.metrics import MetricsCollector
+from .services.object_storage import LocalObjectStorage
 from .services.pipeline import PipelineService
 from .services.planner import PlannerService
 from .services.redirects import RedirectService
+from .services.video_workshop import (
+    PostProcessOptions,
+    Sora2Client,
+    StyleAnchors,
+    VideoWorkshopService,
+)
 from .storage_db import DatabaseStore
 from .vector_store import VectorStore
 
 app = FastAPI(title="ContentZavod MVP")
+
+
+def get_video_workshop_service(store: DatabaseStore) -> VideoWorkshopService:
+    sora_base_url = os.getenv("SORA_BASE_URL", "http://localhost:9001")
+    sora_api_key = os.getenv("SORA_API_KEY", "demo-key")
+    workdir = Path(os.getenv("VIDEO_WORKSHOP_WORKDIR", "storage/video_workshop"))
+    storage_root = Path(os.getenv("OBJECT_STORAGE_ROOT", "storage/object_storage"))
+    public_base_url = os.getenv(
+        "OBJECT_STORAGE_PUBLIC_URL", "http://localhost:8000/storage"
+    )
+    storage = LocalObjectStorage(storage_root, public_base_url)
+    ffmpeg_path = os.getenv("FFMPEG_PATH", "ffmpeg")
+    return VideoWorkshopService(
+        store,
+        Sora2Client(sora_base_url, sora_api_key),
+        storage,
+        workdir,
+        ffmpeg_path=ffmpeg_path,
+    )
 
 
 @app.on_event("startup")
@@ -555,6 +583,62 @@ def list_content_items(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@app.post(
+    "/projects/{project_id}/video-workshop/run",
+    response_model=schemas.ContentItem,
+)
+def run_video_workshop(
+    project_id: int,
+    payload: schemas.VideoWorkshopRunRequest,
+    store: DatabaseStore = Depends(get_store),
+    _: schemas.User = Depends(auth.require_roles("Admin", "Editor")),
+) -> schemas.ContentItem:
+    try:
+        _, topic = store.get_content_item_with_topic(
+            project_id, payload.content_item_id
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    service = get_video_workshop_service(store)
+    anchors = payload.style_anchors
+    style_anchors = StyleAnchors(
+        camera=anchors.camera,
+        movement=anchors.movement,
+        angle=anchors.angle,
+        lighting=anchors.lighting,
+        palette=anchors.palette,
+        location=anchors.location,
+        characters=anchors.characters,
+    )
+    postprocess = None
+    if payload.postprocess:
+        postprocess = PostProcessOptions(
+            resolution=payload.postprocess.resolution,
+            video_codec=payload.postprocess.video_codec,
+            remove_audio=payload.postprocess.remove_audio,
+            audio_path=Path(payload.postprocess.audio_path)
+            if payload.postprocess.audio_path
+            else None,
+            cover_enabled=payload.postprocess.cover_enabled,
+        )
+    try:
+        service.run_workshop(
+            project_id,
+            payload.content_item_id,
+            topic.title,
+            topic.angle,
+            style_anchors,
+            postprocess,
+            payload.clip_durations,
+        )
+    except BudgetLimitExceeded as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return store.get_content_item(project_id, payload.content_item_id)
+
+
 @app.post("/projects/{project_id}/qc-reports", response_model=schemas.QcReport)
 def create_qc_report(
     project_id: int,
@@ -753,11 +837,13 @@ def run_pipeline(
     store: DatabaseStore = Depends(get_store),
     _: schemas.User = Depends(auth.require_roles("Admin", "Editor")),
 ) -> dict:
-    pipeline = PipelineService(store)
+    pipeline = PipelineService(store, video_workshop=get_video_workshop_service(store))
     try:
         return pipeline.run(project_id, topic_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except BudgetLimitExceeded as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.post("/projects/{project_id}/budget-usages", response_model=schemas.BudgetUsage)

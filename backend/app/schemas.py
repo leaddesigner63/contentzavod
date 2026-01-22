@@ -184,6 +184,31 @@ class ContentItem(ContentItemCreate):
     created_at: datetime
 
 
+class StyleAnchorsPayload(BaseModel):
+    camera: str
+    movement: str
+    angle: str
+    lighting: str
+    palette: str
+    location: str
+    characters: List[str] = []
+
+
+class PostProcessOptionsPayload(BaseModel):
+    resolution: str = "1080x1920"
+    video_codec: str = "libx264"
+    remove_audio: bool = False
+    audio_path: Optional[str] = None
+    cover_enabled: bool = True
+
+
+class VideoWorkshopRunRequest(BaseModel):
+    content_item_id: int
+    style_anchors: StyleAnchorsPayload
+    clip_durations: Optional[List[int]] = None
+    postprocess: Optional[PostProcessOptionsPayload] = None
+
+
 class QcReportCreate(BaseModel):
     content_item_id: int
     score: float

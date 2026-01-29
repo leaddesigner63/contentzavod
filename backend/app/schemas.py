@@ -412,6 +412,16 @@ class BudgetWindowUsage(BaseModel):
     token_used: int
     video_seconds_used: int
     publications_used: int
+    budget_limit: Optional[float] = None
+    token_limit: Optional[int] = None
+    video_seconds_limit: Optional[int] = None
+    publications_limit: Optional[int] = None
+    token_used_pct: Optional[float] = None
+    video_seconds_used_pct: Optional[float] = None
+    publications_used_pct: Optional[float] = None
+    token_remaining: Optional[int] = None
+    video_seconds_remaining: Optional[int] = None
+    publications_remaining: Optional[int] = None
 
 
 class BudgetReport(BaseModel):

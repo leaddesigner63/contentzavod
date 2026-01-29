@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from .. import schemas
-from ..observability import get_logger
+from ..observability import get_logger, increment_metric, log_event
 from ..storage_db import DatabaseStore
 from .alerts import AlertService
 
@@ -54,16 +54,18 @@ class BudgetService:
                 publications_used=publications_used,
             ),
         )
-        self.logger.info(
+        increment_metric(
+            "budget_usage_recorded_total",
+            tags={"project_id": str(project_id)},
+        )
+        log_event(
+            self.logger,
             "budget_usage_recorded",
-            extra={
-                "event": "budget_usage_recorded",
-                "project_id": project_id,
-                "budget_id": budget.id,
-                "token_used": token_used,
-                "video_seconds_used": video_seconds_used,
-                "publications_used": publications_used,
-            },
+            project_id=project_id,
+            budget_id=budget.id,
+            token_used=token_used,
+            video_seconds_used=video_seconds_used,
+            publications_used=publications_used,
         )
         return usage
 
@@ -122,9 +124,9 @@ class BudgetService:
     def build_report(self, project_id: int) -> schemas.BudgetReport:
         budget = self.get_active_budget(project_id)
         now = datetime.utcnow()
-        daily = self._build_window_usage(project_id, "daily", now)
-        weekly = self._build_window_usage(project_id, "weekly", now)
-        monthly = self._build_window_usage(project_id, "monthly", now)
+        daily = self._build_window_usage(project_id, budget, "daily", now)
+        weekly = self._build_window_usage(project_id, budget, "weekly", now)
+        monthly = self._build_window_usage(project_id, budget, "monthly", now)
         blocked = self._is_blocked(budget, daily)
         return schemas.BudgetReport(
             project_id=project_id,
@@ -135,15 +137,34 @@ class BudgetService:
         )
 
     def _build_window_usage(
-        self, project_id: int, window: str, now: datetime
+        self, project_id: int, budget: schemas.Budget, window: str, now: datetime
     ) -> schemas.BudgetWindowUsage:
         start = self._get_window_start(window, now)
         totals = self.store.sum_budget_usage(project_id, start, now)
+        budget_limit = self._get_budget_limit(budget, window)
         return schemas.BudgetWindowUsage(
             window=window,
             token_used=totals.token_used,
             video_seconds_used=totals.video_seconds_used,
             publications_used=totals.publications_used,
+            budget_limit=budget_limit,
+            token_limit=budget.token_limit,
+            video_seconds_limit=budget.video_seconds_limit,
+            publications_limit=budget.publication_limit,
+            token_used_pct=self._calc_pct(totals.token_used, budget.token_limit),
+            video_seconds_used_pct=self._calc_pct(
+                totals.video_seconds_used, budget.video_seconds_limit
+            ),
+            publications_used_pct=self._calc_pct(
+                totals.publications_used, budget.publication_limit
+            ),
+            token_remaining=self._calc_remaining(totals.token_used, budget.token_limit),
+            video_seconds_remaining=self._calc_remaining(
+                totals.video_seconds_used, budget.video_seconds_limit
+            ),
+            publications_remaining=self._calc_remaining(
+                totals.publications_used, budget.publication_limit
+            ),
         )
 
     @staticmethod
@@ -156,6 +177,28 @@ class BudgetService:
         if window == "monthly":
             return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         raise ValueError("unsupported_window")
+
+    @staticmethod
+    def _get_budget_limit(budget: schemas.Budget, window: str) -> float:
+        if window == "daily":
+            return budget.daily
+        if window == "weekly":
+            return budget.weekly
+        if window == "monthly":
+            return budget.monthly
+        raise ValueError("unsupported_window")
+
+    @staticmethod
+    def _calc_pct(used: int, limit: int) -> Optional[float]:
+        if not limit:
+            return None
+        return round((used / limit) * 100, 2)
+
+    @staticmethod
+    def _calc_remaining(used: int, limit: int) -> Optional[int]:
+        if not limit:
+            return None
+        return max(limit - used, 0)
 
     @staticmethod
     def _is_blocked(

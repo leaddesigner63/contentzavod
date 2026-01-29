@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from datetime import timedelta
 import os
 import csv
@@ -11,9 +12,10 @@ from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import RedirectResponse
 
 from . import auth, schemas
+from .db import get_session
 from .dependencies import get_store
 from .observability import configure_logging, configure_tracing, get_logger
-from .services.alerts import AlertService
+from .services.alerts import AlertService, IntegrationMonitor
 from .services.budgets import BudgetLimitExceeded, BudgetService
 from .services.ingest import IngestService
 from .services.learning import AutoLearningService
@@ -32,6 +34,12 @@ from .storage_db import DatabaseStore
 from .vector_store import VectorStore
 
 app = FastAPI(title="ContentZavod MVP")
+
+
+@contextmanager
+def store_context() -> DatabaseStore:
+    with get_session() as session:
+        yield DatabaseStore(session)
 
 
 def get_video_workshop_service(store: DatabaseStore) -> VideoWorkshopService:
@@ -57,6 +65,23 @@ def get_video_workshop_service(store: DatabaseStore) -> VideoWorkshopService:
 def startup() -> None:
     configure_logging()
     configure_tracing(app)
+    if os.getenv("INTEGRATION_CHECKS_ENABLED", "true").lower() in {"true", "1", "yes"}:
+        interval_seconds = int(os.getenv("INTEGRATION_CHECK_INTERVAL", "300"))
+        timeout_seconds = int(os.getenv("INTEGRATION_CHECK_TIMEOUT", "5"))
+        monitor = IntegrationMonitor(
+            store_context,
+            interval_seconds=interval_seconds,
+            timeout=timeout_seconds,
+        )
+        monitor.start()
+        app.state.integration_monitor = monitor
+
+
+@app.on_event("shutdown")
+def shutdown() -> None:
+    monitor = getattr(app.state, "integration_monitor", None)
+    if monitor:
+        monitor.stop()
 
 
 @app.middleware("http")
@@ -904,18 +929,32 @@ def export_budget_report(
     writer.writerow(
         [
             "window",
+            "budget_limit",
             "token_used",
+            "token_limit",
+            "token_used_pct",
             "video_seconds_used",
+            "video_seconds_limit",
+            "video_seconds_used_pct",
             "publications_used",
+            "publications_limit",
+            "publications_used_pct",
         ]
     )
     for window in report.windows:
         writer.writerow(
             [
                 window.window,
+                window.budget_limit,
                 window.token_used,
+                window.token_limit,
+                window.token_used_pct,
                 window.video_seconds_used,
+                window.video_seconds_limit,
+                window.video_seconds_used_pct,
                 window.publications_used,
+                window.publications_limit,
+                window.publications_used_pct,
             ]
         )
     return Response(

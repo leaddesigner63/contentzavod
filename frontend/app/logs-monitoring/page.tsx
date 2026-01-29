@@ -25,21 +25,28 @@ type BudgetUsage = {
 
 type BudgetReport = {
   budget: {
-    daily_token_limit: number;
-    weekly_token_limit: number;
-    monthly_token_limit: number;
-    daily_video_seconds_limit: number;
-    weekly_video_seconds_limit: number;
-    monthly_video_seconds_limit: number;
-    daily_publications_limit: number;
-    weekly_publications_limit: number;
-    monthly_publications_limit: number;
+    daily: number;
+    weekly: number;
+    monthly: number;
+    token_limit: number;
+    video_seconds_limit: number;
+    publication_limit: number;
   };
   windows: {
     window: string;
     token_used: number;
+    token_limit?: number | null;
+    token_used_pct?: number | null;
+    token_remaining?: number | null;
     video_seconds_used: number;
+    video_seconds_limit?: number | null;
+    video_seconds_used_pct?: number | null;
+    video_seconds_remaining?: number | null;
     publications_used: number;
+    publications_limit?: number | null;
+    publications_used_pct?: number | null;
+    publications_remaining?: number | null;
+    budget_limit?: number | null;
   }[];
   is_blocked: boolean;
   generated_at: string;
@@ -108,6 +115,22 @@ export default function LogsMonitoringPage() {
     () => qcReports.filter((report) => !report.passed),
     [qcReports]
   );
+
+  const formatLimit = (value?: number | null) =>
+    value === null || value === undefined ? "—" : value.toLocaleString("ru-RU");
+
+  const formatPercent = (value?: number | null) =>
+    value === null || value === undefined ? "—" : `${value.toFixed(1)}%`;
+
+  const formatUsage = (
+    used: number,
+    limit?: number | null,
+    pct?: number | null,
+    remaining?: number | null
+  ) =>
+    `${used.toLocaleString("ru-RU")} / ${formatLimit(limit)} (${formatPercent(
+      pct
+    )}) · остаток ${formatLimit(remaining)}`;
 
   return (
     <div className="section-grid">
@@ -199,6 +222,18 @@ export default function LogsMonitoringPage() {
           <>
             <div className="stats-grid">
               <div className="stat-card">
+                <span className="label">Бюджет день</span>
+                <strong>{formatLimit(budgetReport.budget.daily)}</strong>
+              </div>
+              <div className="stat-card">
+                <span className="label">Бюджет неделя</span>
+                <strong>{formatLimit(budgetReport.budget.weekly)}</strong>
+              </div>
+              <div className="stat-card">
+                <span className="label">Бюджет месяц</span>
+                <strong>{formatLimit(budgetReport.budget.monthly)}</strong>
+              </div>
+              <div className="stat-card">
                 <span className="label">Блокировка</span>
                 <strong>{budgetReport.is_blocked ? "да" : "нет"}</strong>
               </div>
@@ -213,18 +248,41 @@ export default function LogsMonitoringPage() {
               <thead>
                 <tr>
                   <th>Окно</th>
-                  <th>Токены</th>
-                  <th>Видео сек</th>
-                  <th>Публикации</th>
+                  <th>Бюджет</th>
+                  <th>Токены (использование)</th>
+                  <th>Видео сек (использование)</th>
+                  <th>Публикации (использование)</th>
                 </tr>
               </thead>
               <tbody>
                 {budgetReport.windows.map((window) => (
                   <tr key={window.window}>
                     <td>{window.window}</td>
-                    <td>{window.token_used}</td>
-                    <td>{window.video_seconds_used}</td>
-                    <td>{window.publications_used}</td>
+                    <td>{formatLimit(window.budget_limit)}</td>
+                    <td>
+                      {formatUsage(
+                        window.token_used,
+                        window.token_limit,
+                        window.token_used_pct,
+                        window.token_remaining
+                      )}
+                    </td>
+                    <td>
+                      {formatUsage(
+                        window.video_seconds_used,
+                        window.video_seconds_limit,
+                        window.video_seconds_used_pct,
+                        window.video_seconds_remaining
+                      )}
+                    </td>
+                    <td>
+                      {formatUsage(
+                        window.publications_used,
+                        window.publications_limit,
+                        window.publications_used_pct,
+                        window.publications_remaining
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
